@@ -4,9 +4,12 @@ import Link from 'next/link'
 import { api, Audience, Experiment, SimulationRun } from '@/lib/api'
 import { Card, CardBody } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
+import { Button } from '@/components/ui/Button'
 import { PageSpinner } from '@/components/ui/Spinner'
+import { useToast } from '@/components/ui/Toast'
 import { fmtDateTime, runStatusColor, pct } from '@/lib/utils'
 import { ProgressBar } from '@/components/ui/ProgressBar'
+import { PruneRunsModal } from '@/components/PruneRunsModal'
 
 function StatCard({ label, value, sub, color }: { label: string; value: string | number; sub?: string; color?: string }) {
   return (
@@ -21,26 +24,54 @@ function StatCard({ label, value, sub, color }: { label: string; value: string |
 }
 
 export default function Dashboard() {
+  const { toast } = useToast()
   const [audiences, setAudiences] = useState<Audience[]>([])
   const [experiments, setExperiments] = useState<Experiment[]>([])
   const [runs, setRuns] = useState<SimulationRun[]>([])
   const [loading, setLoading] = useState(true)
+  const [pruneModalOpen, setPruneModalOpen] = useState(false)
+  const [pruning, setPruning] = useState(false)
 
-  useEffect(() => {
-    Promise.all([
+  async function loadAll() {
+    const [a, e, r] = await Promise.all([
       api.listAudiences(),
       api.listExperiments(),
       api.listRuns ? api.listRuns() : Promise.resolve([]),
     ])
-      .then(([a, e, r]) => { setAudiences(a); setExperiments(e); setRuns(r as SimulationRun[]) })
-      .finally(() => setLoading(false))
+    setAudiences(a)
+    setExperiments(e)
+    setRuns(r as SimulationRun[])
+  }
+
+  useEffect(() => {
+    loadAll().finally(() => setLoading(false))
   }, [])
+
+  async function handlePruneConfirm(includeCompleted: boolean) {
+    try {
+      setPruning(true)
+      const { deleted } = await api.pruneRuns(includeCompleted)
+      toast(`Pruned ${deleted} run${deleted !== 1 ? 's' : ''}`, 'success')
+      setPruneModalOpen(false)
+      await loadAll()
+    } catch (e: unknown) {
+      toast(e instanceof Error ? e.message : 'Prune failed', 'error')
+    } finally {
+      setPruning(false)
+    }
+  }
 
   if (loading) return <PageSpinner />
 
   const runningRuns = runs.filter(r => r.status === 'running')
   const completedRuns = runs.filter(r => r.status === 'completed')
   const totalTasks = runs.reduce((s, r) => s + (r.total_tasks ?? 0), 0)
+  const pruneCounts = {
+    failed:    runs.filter(r => r.status === 'failed').length,
+    cancelled: runs.filter(r => r.status === 'cancelled').length,
+    completed: completedRuns.length,
+  }
+  const hasPrunable = pruneCounts.failed + pruneCounts.cancelled + pruneCounts.completed > 0
 
   return (
     <div className="space-y-8 max-w-4xl">
@@ -96,7 +127,17 @@ export default function Dashboard() {
       {/* Recent runs */}
       {runs.length > 0 && (
         <div>
-          <h2 className="mb-4 text-lg font-semibold text-gray-900">Recent Runs</h2>
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-gray-900">Recent Runs</h2>
+            {hasPrunable && (
+              <Button
+                variant="secondary"
+                onClick={() => setPruneModalOpen(true)}
+              >
+                🗑 Prune runs
+              </Button>
+            )}
+          </div>
           <div className="space-y-3">
             {runs.slice(0, 8).map(run => {
               const progress = pct(
@@ -158,6 +199,14 @@ export default function Dashboard() {
           </CardBody>
         </Card>
       )}
+
+      <PruneRunsModal
+        open={pruneModalOpen}
+        onClose={() => setPruneModalOpen(false)}
+        onConfirm={handlePruneConfirm}
+        loading={pruning}
+        counts={pruneCounts}
+      />
     </div>
   )
 }

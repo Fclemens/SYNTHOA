@@ -162,6 +162,7 @@ async def _run_dedicated_interview(
     run_id: str | None = None,
     db: AsyncSession | None = None,
     injected_vars: dict[str, str] | None = None,
+    drift_detection_enabled: bool = True,
 ) -> tuple[str, int, int, list[float], bool, str]:
     """
     Run a multi-turn dedicated interview with drift detection.
@@ -211,8 +212,8 @@ async def _run_dedicated_interview(
             if run_check and run_check.status == "cancelled":
                 raise _RunCancelled()
 
-        # Drift checkpoint injection
-        if should_inject_checkpoint(idx):
+        # Drift checkpoint injection (only when drift detection is enabled)
+        if drift_detection_enabled and should_inject_checkpoint(idx):
             checkpoint_q = get_checkpoint_prompt()
             conversation.append({"role": "user", "content": checkpoint_q})
             cp_response, cp_in, cp_out = await call_llm_messages(
@@ -293,6 +294,7 @@ async def _execute_task(
     provider_pass2 = run_config.get("provider_pass2", settings.provider_pass2)
     dual_extraction = run_config.get("dual_extraction", True)
     execution_mode = run_config.get("execution_mode", "pooled")
+    drift_detection_enabled = run_config.get("drift_detection_enabled", True)
     exp_config = run_config.get("exp_config", {})
 
     traits = persona.traits_json
@@ -311,6 +313,7 @@ async def _execute_task(
                     provider=provider_pass1, provider_pass2=provider_pass2,
                     run_id=task.run_id, db=db,
                     injected_vars=stored_vars,
+                    drift_detection_enabled=drift_detection_enabled,
                 )
                 task.drift_scores = drift_scores
                 task.drift_flagged = drift_flagged
@@ -461,6 +464,7 @@ async def launch_run(
             "dual_extraction": locked.get("dual_extraction", True),
             "execution_mode": locked.get("execution_mode", "pooled"),
             "output_schema": locked.get("output_schema", []),
+            "drift_detection_enabled": locked.get("drift_detection_enabled", True),
             "exp_config": exp_config,
             "est_tokens_per_task": locked.get("est_tokens_per_task", 2000),
         }

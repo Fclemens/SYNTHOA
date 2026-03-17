@@ -2,6 +2,8 @@
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { api, SimulationRun } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
+import { PruneRunsModal } from '@/components/PruneRunsModal'
 
 const POLL_MS = 3000
 const MAX_SHOWN = 5
@@ -23,8 +25,11 @@ function statusDot(status: string) {
 }
 
 export default function ActiveRunsTracker() {
-  const [runs, setRuns]       = useState<SimulationRun[]>([])
-  const [progress, setProgress] = useState<Record<string, RunProgress>>({})
+  const { toast } = useToast()
+  const [runs, setRuns]           = useState<SimulationRun[]>([])
+  const [progress, setProgress]   = useState<Record<string, RunProgress>>({})
+  const [pruneModalOpen, setPruneModalOpen] = useState(false)
+  const [pruning, setPruning]     = useState(false)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   async function poll() {
@@ -48,6 +53,20 @@ export default function ActiveRunsTracker() {
     }
   }
 
+  async function handlePruneConfirm(includeCompleted: boolean) {
+    try {
+      setPruning(true)
+      const { deleted } = await api.pruneRuns(includeCompleted)
+      toast(`Pruned ${deleted} run${deleted !== 1 ? 's' : ''}`, 'success')
+      setPruneModalOpen(false)
+      await poll()
+    } catch (e: unknown) {
+      toast(e instanceof Error ? e.message : 'Prune failed', 'error')
+    } finally {
+      setPruning(false)
+    }
+  }
+
   useEffect(() => {
     poll()
     intervalRef.current = setInterval(poll, POLL_MS)
@@ -56,11 +75,35 @@ export default function ActiveRunsTracker() {
 
   if (runs.length === 0) return null
 
+  const pruneCounts = {
+    failed:    runs.filter(r => r.status === 'failed').length,
+    cancelled: runs.filter(r => r.status === 'cancelled').length,
+    completed: runs.filter(r => r.status === 'completed').length,
+  }
+  const prunableCount = pruneCounts.failed + pruneCounts.cancelled + pruneCounts.completed
+
   return (
     <div className="border-t border-gray-100 px-3 py-3">
-      <p className="mb-2 px-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
-        Recent Runs
-      </p>
+      <div className="mb-2 flex items-center justify-between px-2">
+        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Recent Runs</p>
+        {prunableCount > 0 && (
+          <button
+            onClick={() => setPruneModalOpen(true)}
+            disabled={pruning}
+            title={`Prune ${prunableCount} finished run${prunableCount !== 1 ? 's' : ''}`}
+            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors disabled:opacity-50"
+          >
+            {pruning ? '…' : (
+              <>
+                <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                {prunableCount}
+              </>
+            )}
+          </button>
+        )}
+      </div>
       <div className="space-y-2">
         {runs.map(run => {
           const active = isActive(run.status)
@@ -79,13 +122,15 @@ export default function ActiveRunsTracker() {
             const p1Running = prog.p1_running
             const p2Running = prog.p2_running
 
-            bar1pct = Math.round((p1Done / total) * 100)
-            bar2pct = Math.round((p2Done / total) * 100)
+            // Count running tasks as half-done so the bar shows activity
+            // even during long dedicated-mode interviews
+            bar1pct = Math.round(((p1Done + p1Running * 0.5) / total) * 100)
+            bar2pct = Math.round(((p2Done + p2Running * 0.5) / total) * 100)
 
             if (p1Done < total) {
-              phase = `P1: ${p1Running > 0 ? p1Running + ' active · ' : ''}${p1Done}/${total}`
+              phase = `P1: ${p1Running > 0 ? p1Running + ' interviewing · ' : ''}${p1Done}/${total} done`
             } else {
-              phase = `P2: ${p2Running > 0 ? p2Running + ' active · ' : ''}${p2Done}/${total}`
+              phase = `P2: ${p2Running > 0 ? p2Running + ' extracting · ' : ''}${p2Done}/${total} done`
             }
             label = phase
           } else if (run.status === 'completed') {
@@ -167,6 +212,14 @@ export default function ActiveRunsTracker() {
           )
         })}
       </div>
+
+      <PruneRunsModal
+        open={pruneModalOpen}
+        onClose={() => setPruneModalOpen(false)}
+        onConfirm={handlePruneConfirm}
+        loading={pruning}
+        counts={pruneCounts}
+      />
     </div>
   )
 }

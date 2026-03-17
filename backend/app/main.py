@@ -19,6 +19,7 @@ async def _migrate_db() -> None:
     """Add new columns to existing tables without full Alembic migrations."""
     migrations = [
         "ALTER TABLE audiences ADD COLUMN backstory_prompt_template TEXT",
+        "ALTER TABLE experiments ADD COLUMN drift_detection_enabled BOOLEAN NOT NULL DEFAULT 1",
     ]
     async with engine.begin() as conn:
         for stmt in migrations:

@@ -306,6 +306,7 @@ function OverviewTab({ experiment, onSaved }: { experiment: Experiment; onSaved:
     global_context: experiment.global_context ?? '',
     execution_mode: experiment.execution_mode,
     synonym_injection_enabled: experiment.synonym_injection_enabled,
+    drift_detection_enabled: experiment.drift_detection_enabled ?? true,
   })
 
   useEffect(() => {
@@ -420,6 +421,37 @@ function OverviewTab({ experiment, onSaved }: { experiment: Experiment; onSaved:
             </Badge>
           )}
         </div>
+
+        {(editing ? form.execution_mode === 'dedicated' : experiment.execution_mode === 'dedicated') && (
+          <div>
+            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
+              Drift Detection
+              <span className="ml-1 normal-case font-normal text-gray-400">(dedicated mode only)</span>
+            </label>
+            {editing ? (
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={form.drift_detection_enabled}
+                  onChange={e => setForm(f => ({ ...f, drift_detection_enabled: e.target.checked }))}
+                  className="rounded border-gray-300 text-indigo-600"
+                />
+                <span>Enabled — inject adherence checkpoints every 3 questions</span>
+              </label>
+            ) : (
+              <div className="flex items-center gap-2">
+                <Badge color={experiment.drift_detection_enabled ? 'green' : 'gray'}>
+                  {experiment.drift_detection_enabled ? 'Enabled' : 'Disabled'}
+                </Badge>
+                <span className="text-xs text-gray-400">
+                  {experiment.drift_detection_enabled
+                    ? 'Adds ~2 LLM calls every 3 questions to score persona adherence'
+                    : 'No extra calls — faster and cheaper, no adherence scoring'}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
 
         <div>
           <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Global Context</label>
@@ -1123,7 +1155,9 @@ function LaunchTab({ experiment }: { experiment: Experiment }) {
   }
 
   useEffect(() => {
+    let cancelled = false
     loadRuns().then(data => {
+      if (cancelled) return   // StrictMode fired cleanup before this resolved — bail out
       const hasActive = data.some(r => r.status === 'running' || r.status === 'pending')
       if (hasActive) {
         pollingRef.current = setInterval(async () => {
@@ -1135,7 +1169,10 @@ function LaunchTab({ experiment }: { experiment: Experiment }) {
         }, 3000)
       }
     })
-    return () => { if (pollingRef.current) { clearInterval(pollingRef.current!); pollingRef.current = null } }
+    return () => {
+      cancelled = true
+      if (pollingRef.current) { clearInterval(pollingRef.current!); pollingRef.current = null }
+    }
   }, [experiment.id])
 
   async function runPreflight() {

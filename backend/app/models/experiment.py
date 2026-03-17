@@ -19,6 +19,7 @@ class Experiment(Base):
     global_context: Mapped[str] = mapped_column(String, nullable=False, default="")
     execution_mode: Mapped[str] = mapped_column(String, nullable=False, default="pooled")  # "pooled" | "dedicated"
     synonym_injection_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    drift_detection_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     variables: Mapped[list["ExperimentVariable"]] = relationship(

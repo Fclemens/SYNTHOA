@@ -101,6 +101,7 @@ export interface ExperimentDistVariable {
 export interface Experiment {
   id: string; audience_id: string; name: string; global_context: string;
   execution_mode: "pooled" | "dedicated"; synonym_injection_enabled: boolean;
+  drift_detection_enabled: boolean;
   created_at: string;
   variables: ExperimentVariable[]; dist_variables: ExperimentDistVariable[];
   synonym_sets: SynonymSet[];
@@ -321,6 +322,12 @@ export const api = {
     req<{ status: string }>("POST", `/api/runs/${runId}/re-extract`, { schema_version }),
   exportRun: (runId: string, format: "csv" | "xlsx" = "csv", includeTranscript = false) =>
     `${BASE}/api/runs/${runId}/export?format=${format}&include_transcript=${includeTranscript}`,
+  deleteRun: (runId: string) => req<void>("DELETE", `/api/runs/${runId}`),
+  pruneRuns: (includeCompleted = false, experimentId?: string) => {
+    const params = new URLSearchParams({ include_completed: String(includeCompleted) })
+    if (experimentId) params.set('experiment_id', experimentId)
+    return req<{ deleted: number }>("DELETE", `/api/runs?${params}`)
+  },
 
   // Settings
   getSettings: () => req<AppSettings>('GET', '/api/settings'),

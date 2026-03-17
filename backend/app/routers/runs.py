@@ -6,7 +6,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
@@ -150,6 +150,7 @@ async def launch_simulation(
         "dual_extraction": body.dual_extraction,
         "output_schema": output_schema,
         "synonym_injection_enabled": exp.synonym_injection_enabled,
+        "drift_detection_enabled": exp.drift_detection_enabled,
         "est_tokens_per_task": 2000,
     }
 
@@ -271,6 +272,55 @@ async def cancel_run(run_id: str, db: AsyncSession = Depends(get_db)):
     run.status = "cancelled"
     await db.commit()
     return {"status": "cancelled", "run_id": run_id}
+
+
+@router.delete("/runs", status_code=200)
+async def prune_runs(
+    experiment_id: Optional[str] = Query(None),
+    include_completed: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Delete finished runs (optionally scoped to one experiment).
+    - include_completed=false (default): deletes failed + cancelled only
+    - include_completed=true:            deletes failed + cancelled + completed
+    Running and pending runs are never touched.
+    """
+    statuses = ["failed", "cancelled"]
+    if include_completed:
+        statuses.append("completed")
+    q = select(SimulationRun).where(SimulationRun.status.in_(statuses))
+    if experiment_id:
+        q = q.where(SimulationRun.experiment_id == experiment_id)
+    result = await db.execute(q)
+    runs = result.scalars().all()
+    run_ids = [r.id for r in runs]
+    if run_ids:
+        await db.execute(delete(SimulationTask).where(SimulationTask.run_id.in_(run_ids)))
+        for run in runs:
+            await db.delete(run)
+        await db.commit()
+    return {"deleted": len(run_ids)}
+
+
+@router.delete("/runs/{run_id}", status_code=204)
+async def delete_run(run_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Delete a single run and all its tasks.
+    Only allowed when the run is in 'completed' or 'cancelled' status.
+    """
+    run = await db.get(SimulationRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.status not in ("completed", "cancelled", "failed"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot delete run with status '{run.status}'. "
+                   "Only completed, cancelled, or failed runs may be deleted.",
+        )
+    await db.execute(delete(SimulationTask).where(SimulationTask.run_id == run_id))
+    await db.delete(run)
+    await db.commit()
 
 
 @router.post("/runs/{run_id}/resume", status_code=202)

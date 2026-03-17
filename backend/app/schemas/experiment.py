@@ -142,6 +142,7 @@ class ExperimentCreate(BaseModel):
     global_context: str = ""
     execution_mode: Literal["pooled", "dedicated"] = "pooled"
     synonym_injection_enabled: bool = False
+    drift_detection_enabled: bool = True
 
 
 class ExperimentUpdate(BaseModel):
@@ -150,6 +151,7 @@ class ExperimentUpdate(BaseModel):
     global_context: Optional[str] = None
     execution_mode: Optional[Literal["pooled", "dedicated"]] = None
     synonym_injection_enabled: Optional[bool] = None
+    drift_detection_enabled: Optional[bool] = None
 
 
 class ExperimentOut(BaseModel):
@@ -160,6 +162,7 @@ class ExperimentOut(BaseModel):
     global_context: str
     execution_mode: str
     synonym_injection_enabled: bool
+    drift_detection_enabled: bool
     created_at: datetime
     variables: list[ExperimentVariableOut] = []
     dist_variables: list[ExperimentDistVariableOut] = []
