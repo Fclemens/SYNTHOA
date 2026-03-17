@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(python -c \"from app.main import app; print\\(''Import OK''\\)\")",
+      "Bash(python -W error::UserWarning -c \"from app.main import app; print\\(''Clean import!''\\)\")",
+      "Bash(python -c \"import warnings; warnings.filterwarnings\\(''error'', category=UserWarning, message=''Field.*model_''\\); from app.main import app; print\\(''Import OK - no model_ namespace warnings''\\)\")",
+      "Bash(python -c \":*)",
+      "Bash(notepad \"C:\\\\Users\\\\fclem\\\\OneDrive\\\\Documenti\\\\GenAI_Survey_SIM\\\\backend\\\\.env\")",
+      "Bash(curl http://localhost:1234/v1/models)",
+      "Bash(curl -s http://localhost:1234/v1/chat/completions -H \"Content-Type: application/json\" -d \"{\"\"model\"\":\"\"lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF/Meta-Llama-3.1-8B-Instruct-Q6_K.gguf\"\",\"\"messages\"\":[{\"\"role\"\":\"\"user\"\",\"\"content\"\":\"\"Say hello in 5 words.\"\"}],\"\"max_tokens\"\":20}\")",
+      "Bash(pip show:*)",
+      "Bash(npx tsc:*)",
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(npm install:*)",
+      "Bash(\"C:/Users/fclem/OneDrive/Documenti/GenAI_Survey_SIM/frontend/node_modules/.bin/tsc\" --noEmit)",
+      "Bash(node_modules/.bin/tsc --noEmit -p tsconfig.json)"
+    ]
+  }
+}
