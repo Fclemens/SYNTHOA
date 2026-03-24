@@ -38,8 +38,8 @@ interface VarFormState {
   bucket_labels: string[]   // custom ordered labels; length determines bucket count
   // categorical options
   cat_options: CatOption[]
-  // ordinal options (ordered labels, lowest → highest)
-  ordinal_options: string[]
+  // ordinal options (ordered labels lowest → highest, with weights)
+  ordinal_options: { label: string; weight: number }[]
 }
 
 const DEFAULT_BUCKET_PRESETS: Record<number, string[]> = {
@@ -64,7 +64,7 @@ const defaultForm = (): VarFormState => ({
   normalize_labels: false,
   bucket_labels: [...DEFAULT_BUCKET_PRESETS[5]],
   cat_options: [{ label: 'Option A', weight: 50 }, { label: 'Option B', weight: 50 }],
-  ordinal_options: ['Low', 'Medium', 'High'],
+  ordinal_options: [{ label: 'Low', weight: 33 }, { label: 'Medium', weight: 34 }, { label: 'High', weight: 33 }],
 })
 
 function buildDistribution(form: VarFormState): Record<string, unknown> {
@@ -75,7 +75,7 @@ function buildDistribution(form: VarFormState): Record<string, unknown> {
   if (form.var_type === 'ordinal') {
     return {
       type: 'ordinal',
-      options: form.ordinal_options.filter(o => o.trim() !== ''),
+      options: form.ordinal_options.filter(o => o.label.trim() !== ''),
     }
   }
   if (form.var_type === 'categorical') {
@@ -378,64 +378,75 @@ function VariableFormFields({
           <div className="flex items-center justify-between mb-2">
             <div>
               <label className={labelCls}>Ordered categories</label>
-              <p className="text-xs text-gray-400 mt-0.5">List from <strong>lowest</strong> to <strong>highest</strong> rank. Equal probability by default.</p>
+              <p className="text-xs text-gray-400 mt-0.5">List from <strong>lowest</strong> to <strong>highest</strong> rank. Weights control relative frequency.</p>
             </div>
             <button
               type="button"
-              onClick={() => set({ ordinal_options: [...form.ordinal_options, ''] })}
+              onClick={() => set({ ordinal_options: [...form.ordinal_options, { label: '', weight: 33 }] })}
               className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
             >
               + Add level
             </button>
           </div>
-          <div className="space-y-1.5">
-            {form.ordinal_options.map((opt, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <span className="text-xs text-gray-400 w-5 text-right shrink-0">{i + 1}</span>
-                <input
-                  type="text"
-                  value={opt}
-                  onChange={e => {
-                    const next = [...form.ordinal_options]
-                    next[i] = e.target.value
-                    set({ ordinal_options: next })
-                  }}
-                  placeholder={`Level ${i + 1}`}
-                  className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                />
-                <button
-                  type="button"
-                  disabled={i === 0}
-                  onClick={() => {
-                    const next = [...form.ordinal_options]
-                    ;[next[i - 1], next[i]] = [next[i], next[i - 1]]
-                    set({ ordinal_options: next })
-                  }}
-                  className="text-gray-400 hover:text-gray-600 disabled:opacity-20 text-sm px-1"
-                  title="Move up"
-                >↑</button>
-                <button
-                  type="button"
-                  disabled={i === form.ordinal_options.length - 1}
-                  onClick={() => {
-                    const next = [...form.ordinal_options]
-                    ;[next[i], next[i + 1]] = [next[i + 1], next[i]]
-                    set({ ordinal_options: next })
-                  }}
-                  className="text-gray-400 hover:text-gray-600 disabled:opacity-20 text-sm px-1"
-                  title="Move down"
-                >↓</button>
-                <button
-                  type="button"
-                  onClick={() => set({ ordinal_options: form.ordinal_options.filter((_, j) => j !== i) })}
-                  className="text-gray-400 hover:text-red-500 text-lg leading-none px-1"
-                  title="Remove"
-                >×</button>
-              </div>
-            ))}
+          {/* header row */}
+          <div className="flex items-center gap-2 mb-1 px-1">
+            <span className="w-5 shrink-0" />
+            <span className="flex-1 text-xs text-gray-400">Label</span>
+            <span className="w-16 text-xs text-gray-400 text-right">Weight</span>
+            <span className="w-12 text-xs text-gray-400 text-right">%</span>
+            <span className="w-16 shrink-0" />
           </div>
+          {(() => {
+            const totalW = form.ordinal_options.reduce((s, o) => s + (o.weight || 0), 0) || 1
+            return (
+              <div className="space-y-1.5">
+                {form.ordinal_options.map((opt, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400 w-5 text-right shrink-0">{i + 1}</span>
+                    <input
+                      type="text"
+                      value={opt.label}
+                      onChange={e => {
+                        const next = [...form.ordinal_options]
+                        next[i] = { ...next[i], label: e.target.value }
+                        set({ ordinal_options: next })
+                      }}
+                      placeholder={`Level ${i + 1}`}
+                      className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      step="any"
+                      value={opt.weight}
+                      onChange={e => {
+                        const next = [...form.ordinal_options]
+                        next[i] = { ...next[i], weight: parseFloat(e.target.value) || 0 }
+                        set({ ordinal_options: next })
+                      }}
+                      className="w-16 rounded-lg border border-gray-300 px-2 py-1.5 text-sm text-right focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                    <span className="w-12 text-xs text-gray-400 text-right">
+                      {((opt.weight / totalW) * 100).toFixed(0)}%
+                    </span>
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      <button type="button" disabled={i === 0}
+                        onClick={() => { const next = [...form.ordinal_options]; [next[i-1], next[i]] = [next[i], next[i-1]]; set({ ordinal_options: next }) }}
+                        className="text-gray-400 hover:text-gray-600 disabled:opacity-20 text-sm px-1" title="Move up">↑</button>
+                      <button type="button" disabled={i === form.ordinal_options.length - 1}
+                        onClick={() => { const next = [...form.ordinal_options]; [next[i], next[i+1]] = [next[i+1], next[i]]; set({ ordinal_options: next }) }}
+                        className="text-gray-400 hover:text-gray-600 disabled:opacity-20 text-sm px-1" title="Move down">↓</button>
+                      <button type="button" disabled={form.ordinal_options.length <= 2}
+                        onClick={() => set({ ordinal_options: form.ordinal_options.filter((_, j) => j !== i) })}
+                        className="text-gray-400 hover:text-red-500 text-lg leading-none px-1 disabled:opacity-20" title="Remove">×</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+          })()}
           <p className="mt-2 text-xs text-indigo-600 bg-indigo-50 rounded-md px-2 py-1.5">
-            ✦ This variable will participate in the correlation matrix (ordinal correlation with continuous and binary variables).
+            ✦ Participates in the correlation matrix (ordinal correlation with continuous and binary variables).
           </p>
         </div>
       )}
@@ -800,8 +811,15 @@ export default function AudienceDetailPage() {
       form.cat_options = opts ?? [{ label: 'Option A', weight: 50 }]
     }
     if (v.var_type === 'ordinal') {
-      const opts = dist.options as string[] | undefined
-      form.ordinal_options = opts ?? ['Low', 'Medium', 'High']
+      const raw = dist.options as unknown[] | undefined
+      if (raw && raw.length > 0) {
+        // Normalise legacy string[] to {label,weight}[]
+        form.ordinal_options = raw.map(o =>
+          typeof o === 'string'
+            ? { label: o, weight: 33 }
+            : (o as { label: string; weight: number })
+        )
+      }
     }
     form.normalize_labels = !!(dist.normalize_labels || dist.bucket_labels)
     if (Array.isArray(dist.bucket_labels) && (dist.bucket_labels as string[]).length >= 2) {

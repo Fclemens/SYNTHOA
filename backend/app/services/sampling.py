@@ -78,13 +78,23 @@ def inverse_cdf(dist: dict[str, Any], u: float) -> float:
     elif t == "weibull":
         return float(weibull_min.ppf(u, c=dist["shape"], scale=dist["scale"]))
     elif t == "ordinal":
-        # Map uniform u to integer category index (uniform spacing across N bins)
+        # Map uniform u to integer category index using cumulative weights
         options = dist.get("options", [])
         n_opts = len(options)
         if n_opts == 0:
             return 0.0
-        idx = min(int(u * n_opts), n_opts - 1)
-        return float(idx)
+        # options may be str[] (legacy equal-weight) or {label, weight}[] (weighted)
+        if options and isinstance(options[0], dict):
+            weights = [max(float(o.get("weight", 1)), 0) for o in options]
+        else:
+            weights = [1.0] * n_opts
+        total = sum(weights) or n_opts
+        cumulative = 0.0
+        for idx, w in enumerate(weights):
+            cumulative += w / total
+            if u <= cumulative:
+                return float(idx)
+        return float(n_opts - 1)
     elif t == "categorical":
         # Binary categorical (exactly 2 options) — encode as 0/1 weighted by option weights
         options = dist.get("options", [])
@@ -247,10 +257,14 @@ async def sample_correlated_population(
                 value = inverse_cdf(var.distribution, u)
 
                 if var.var_type == "ordinal":
-                    # Decode float index → label
+                    # Decode float index → label (supports str[] and {label,weight}[])
                     opts = var.distribution.get("options", [])
                     i = max(0, min(int(value), len(opts) - 1))
-                    traits[var.name] = opts[i] if opts else ""
+                    if opts:
+                        entry = opts[i]
+                        traits[var.name] = entry["label"] if isinstance(entry, dict) else entry
+                    else:
+                        traits[var.name] = ""
                 elif var.var_type == "categorical":
                     # Binary categorical: decode 0/1 → label
                     opts = var.distribution.get("options", [])
