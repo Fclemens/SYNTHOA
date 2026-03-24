@@ -88,7 +88,7 @@ def _render_custom_template(template: str, traits: dict[str, Any]) -> str:
         if key in traits:
             return _fmt_value(traits[key])
         return m.group(0)
-    return re.sub(r"\{(\w+)\}", replacer, template)
+    return re.sub(r"\{([^}]+)\}", replacer, template)
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
