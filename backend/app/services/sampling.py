@@ -162,6 +162,51 @@ def bucket_label(value: float, dist: dict[str, Any]) -> str:
     return labels[-1]
 
 
+def _toposort_cat_vars(cat_vars: list, rules: list) -> list:
+    """Return cat_vars in an order that respects cat→cat conditional rule dependencies.
+
+    If rule on var B references var A (condition_expr["var"] == A.name), A must be
+    sampled before B.  Cycles are broken arbitrarily (should not occur in practice).
+    """
+    name_to_var = {v.name: v for v in cat_vars}
+    id_to_var   = {v.id:   v for v in cat_vars}
+
+    # Build adjacency: dep_of[var_id] = set of var_ids that must come before it
+    dep_of: dict[str, set[str]] = {v.id: set() for v in cat_vars}
+    for rule in rules:
+        target = id_to_var.get(rule.target_var_id)
+        if target is None:
+            continue
+        ref_name = rule.condition_expr.get("var")
+        ref_var  = name_to_var.get(ref_name) if ref_name else None
+        if ref_var and ref_var.id != target.id:
+            dep_of[target.id].add(ref_var.id)
+
+    # Kahn's algorithm
+    sorted_ids: list[str] = []
+    in_degree = {vid: len(deps) for vid, deps in dep_of.items()}
+    queue = [vid for vid, deg in in_degree.items() if deg == 0]
+
+    while queue:
+        vid = queue.pop(0)
+        sorted_ids.append(vid)
+        for other_vid, deps in dep_of.items():
+            if vid in deps:
+                deps.discard(vid)
+                in_degree[other_vid] -= 1
+                if in_degree[other_vid] == 0:
+                    queue.append(other_vid)
+
+    # Any remaining (cycle) — append in original order
+    seen = set(sorted_ids)
+    for v in cat_vars:
+        if v.id not in seen:
+            sorted_ids.append(v.id)
+
+    id_order = {vid: i for i, vid in enumerate(sorted_ids)}
+    return sorted(cat_vars, key=lambda v: id_order.get(v.id, 999))
+
+
 def evaluate_condition(expr: dict[str, Any], traits: dict[str, Any]) -> bool:
     var_val = traits.get(expr["var"])
     if var_val is None:
@@ -225,6 +270,8 @@ async def sample_correlated_population(
         .order_by(ConditionalRule.priority)
     )
     rules = rule_result.scalars().all()
+
+    cat_vars = _toposort_cat_vars(cat_vars, rules)
 
     k = len(copula_vars)
     var_index = {v.id: i for i, v in enumerate(copula_vars)}
