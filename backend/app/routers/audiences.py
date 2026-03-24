@@ -129,7 +129,7 @@ async def list_audiences(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(Audience)
         .order_by(Audience.created_at.desc())
-        .options(selectinload(Audience.variables))
+        .options(selectinload(Audience.variables), selectinload(Audience.personas))
     )
     return result.scalars().all()
 
@@ -148,6 +148,45 @@ async def update_audience(audience_id: str, body: AudienceUpdate, db: AsyncSessi
         setattr(audience, field, value)
     await db.commit()
     return await _get_audience_full(audience_id, db)
+
+
+@router.post("/{audience_id}/duplicate", response_model=AudienceOut, status_code=201)
+async def duplicate_audience(audience_id: str, db: AsyncSession = Depends(get_db)):
+    """Copy audience with all variables and correlations (no personas)."""
+    src = await _get_audience_full(audience_id, db)
+    new_id = str(uuid.uuid4())
+    new_aud = Audience(
+        id=new_id,
+        name=f"{src.name} (copy)",
+        description=src.description,
+        backstory_prompt_template=src.backstory_prompt_template,
+    )
+    db.add(new_aud)
+    await db.flush()
+
+    id_map: dict[str, str] = {}
+    for v in src.variables:
+        new_vid = str(uuid.uuid4())
+        id_map[v.id] = new_vid
+        db.add(AudienceVariable(
+            id=new_vid, audience_id=new_id,
+            name=v.name, var_type=v.var_type,
+            distribution=v.distribution, sort_order=v.sort_order,
+        ))
+
+    corr_result = await db.execute(
+        select(VariableCorrelation).where(VariableCorrelation.audience_id == audience_id)
+    )
+    for c in corr_result.scalars().all():
+        new_a = id_map.get(c.var_a_id)
+        new_b = id_map.get(c.var_b_id)
+        if new_a and new_b:
+            db.add(VariableCorrelation(
+                audience_id=new_id, var_a_id=new_a, var_b_id=new_b, correlation=c.correlation
+            ))
+
+    await db.commit()
+    return await _get_audience_full(new_id, db)
 
 
 @router.delete("/{audience_id}", status_code=status.HTTP_204_NO_CONTENT)

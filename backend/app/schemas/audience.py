@@ -187,6 +187,7 @@ class AudienceOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     variables: list[AudienceVariableOut] = []
+    persona_count: int = 0
 
 
 # ── Persona ───────────────────────────────────────────────────────────────────

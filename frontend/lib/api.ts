@@ -80,6 +80,7 @@ export interface Audience {
   id: string; name: string; description?: string;
   backstory_prompt_template?: string;
   created_at: string; updated_at: string; variables: AudienceVariable[];
+  persona_count?: number;
 }
 export interface Persona {
   id: string; audience_id: string; traits_json: Record<string, unknown>;
@@ -240,6 +241,7 @@ export const api = {
   getAudience: (id: string) => req<Audience>("GET", `/api/audiences/${id}`),
   updateAudience: (id: string, body: Partial<{ name: string; description: string; backstory_prompt_template: string | null }>) =>
     req<Audience>("PUT", `/api/audiences/${id}`, body),
+  duplicateAudience: (id: string) => req<Audience>("POST", `/api/audiences/${id}/duplicate`),
   deleteAudience: (id: string) => req<void>("DELETE", `/api/audiences/${id}`),
 
   addVariable: (audienceId: string, body: { name: string; var_type: string; distribution: DistributionConfig; sort_order?: number }) =>

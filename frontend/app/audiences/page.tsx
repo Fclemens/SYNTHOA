@@ -23,6 +23,21 @@ export default function AudiencesPage() {
   const [creating, setCreating] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Audience | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [duplicating, setDuplicating] = useState<string | null>(null)
+
+  async function handleDuplicate(e: React.MouseEvent, audience: Audience) {
+    e.stopPropagation()
+    try {
+      setDuplicating(audience.id)
+      const copy = await api.duplicateAudience(audience.id)
+      toast(`Duplicated as "${copy.name}"`, 'success')
+      await load()
+    } catch (err: unknown) {
+      toast(err instanceof Error ? err.message : 'Failed to duplicate', 'error')
+    } finally {
+      setDuplicating(null)
+    }
+  }
   const [form, setForm] = useState({ name: '', description: '', target_n: 100 })
 
   const [importing, setImporting] = useState(false)
@@ -152,19 +167,36 @@ export default function AudiencesPage() {
                 onClick={() => router.push(`/audiences/${audience.id}`)}
                 className="relative"
               >
-                <button
-                  onClick={e => { e.stopPropagation(); setDeleteTarget(audience) }}
-                  className="absolute top-2 right-2 z-10 rounded p-1 text-gray-300 hover:bg-red-50 hover:text-red-500 transition-colors"
-                  title="Delete audience"
-                >
-                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                </button>
+                <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
+                  <button
+                    onClick={e => handleDuplicate(e, audience)}
+                    disabled={duplicating === audience.id}
+                    className="rounded p-1 text-gray-300 hover:bg-indigo-50 hover:text-indigo-500 transition-colors disabled:opacity-40"
+                    title="Duplicate audience"
+                  >
+                    {duplicating === audience.id
+                      ? <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
+                      : <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-4 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                    }
+                  </button>
+                  <button
+                    onClick={e => { e.stopPropagation(); setDeleteTarget(audience) }}
+                    className="rounded p-1 text-gray-300 hover:bg-red-50 hover:text-red-500 transition-colors"
+                    title="Delete audience"
+                  >
+                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                </div>
                 <CardBody>
-                  <div className="flex items-start justify-between gap-2 pr-5">
+                  <div className="flex items-start justify-between gap-2 pr-14">
                     <h2 className="font-semibold text-gray-900 leading-tight">{audience.name}</h2>
-                    <Badge color="indigo">{audience.variables?.length ?? 0} vars</Badge>
+                    <Badge color={audience.persona_count ? 'green' : 'gray'}>
+                      {audience.persona_count ?? 0} personas
+                    </Badge>
                   </div>
                   {audience.description && (
                     <p className="mt-2 text-sm text-gray-500 line-clamp-2">{audience.description}</p>

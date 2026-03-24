@@ -33,6 +33,10 @@ class Audience(Base):
         back_populates="audience", cascade="all, delete-orphan"
     )
 
+    @property
+    def persona_count(self) -> int:
+        return len(self.personas)
+
 
 class AudienceVariable(Base):
     __tablename__ = "audience_variables"
