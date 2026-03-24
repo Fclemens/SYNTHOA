@@ -273,6 +273,8 @@ export const api = {
     req<SamplingJob>("POST", `/api/audiences/${audienceId}/sampling-jobs/${jobId}/stop`),
   resumeSamplingJob: (audienceId: string, jobId: string) =>
     req<SamplingJob>("POST", `/api/audiences/${audienceId}/sampling-jobs/${jobId}/resume`),
+  cancelSamplingJob: (audienceId: string, jobId: string) =>
+    req<SamplingJob>("POST", `/api/audiences/${audienceId}/sampling-jobs/${jobId}/cancel`),
   listPersonas: (audienceId: string) =>
     req<Persona[]>("GET", `/api/audiences/${audienceId}/personas`),
   deletePersona: (audienceId: string, personaId: string) =>

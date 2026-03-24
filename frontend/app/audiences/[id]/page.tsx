@@ -719,6 +719,17 @@ export default function AudienceDetailPage() {
     }
   }
 
+  async function handleCancelJob() {
+    if (!activeJob) return
+    try {
+      await api.cancelSamplingJob(id, activeJob.id)
+      setActiveJob(null)
+      toast(`Job cancelled — ${activeJob.n_completed} personas kept`, 'info')
+    } catch (e: unknown) {
+      toast(e instanceof Error ? e.message : 'Failed to cancel job', 'error')
+    }
+  }
+
   async function handleResumeJob() {
     if (!activeJob) return
     try {
@@ -1333,7 +1344,7 @@ Respond authentically as this person would.`}
         </div>
 
         {/* Active job progress */}
-        {activeJob && (activeJob.status === 'running' || activeJob.status === 'stopped' || activeJob.status === 'failed') && (
+        {activeJob && (activeJob.status === 'running' || activeJob.status === 'stopped' || activeJob.status === 'failed' || activeJob.status === 'cancelled') && (
           <Card className="mb-4">
             <CardBody className="py-3">
               <div className="flex items-center justify-between mb-2">
@@ -1350,13 +1361,18 @@ Respond authentically as this person would.`}
                 </div>
                 <div className="flex gap-2">
                   {activeJob.status === 'running' && (
-                    <Button size="sm" variant="danger" loading={stoppingJob} onClick={handleStopJob}>
-                      Stop
+                    <Button size="sm" variant="secondary" loading={stoppingJob} onClick={handleStopJob}>
+                      Pause
                     </Button>
                   )}
                   {activeJob.status === 'stopped' && (
                     <Button size="sm" loading={resumingJob} onClick={handleResumeJob}>
                       Resume
+                    </Button>
+                  )}
+                  {(activeJob.status === 'running' || activeJob.status === 'stopped') && (
+                    <Button size="sm" variant="danger" onClick={handleCancelJob}>
+                      Cancel
                     </Button>
                   )}
                 </div>

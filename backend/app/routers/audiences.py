@@ -440,6 +440,20 @@ async def stop_sampling_job(audience_id: str, job_id: str, db: AsyncSession = De
     return job
 
 
+@router.post("/{audience_id}/sampling-jobs/{job_id}/cancel", response_model=SamplingJobOut)
+async def cancel_sampling_job(audience_id: str, job_id: str, db: AsyncSession = Depends(get_db)):
+    """Stop the job permanently — keeps personas already sampled, no resume possible."""
+    job = await db.get(SamplingJob, job_id)
+    if not job or job.audience_id != audience_id:
+        raise HTTPException(status_code=404, detail="Sampling job not found")
+    if job.status in ("running", "stopped"):
+        job.status = "cancelled"
+        job.completed_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(job)
+    return job
+
+
 @router.post("/{audience_id}/sampling-jobs/{job_id}/resume", response_model=SamplingJobOut, status_code=202)
 async def resume_sampling_job(
     audience_id: str,
