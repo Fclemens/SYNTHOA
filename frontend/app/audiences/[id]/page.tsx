@@ -634,14 +634,23 @@ export default function AudienceDetailPage() {
     try {
       setLoading(true)
       setError(null)
-      const [aud, ps, jobs] = await Promise.all([
+      const [aud, ps, jobs, corrs] = await Promise.all([
         api.getAudience(id),
         api.listPersonas(id),
         api.listSamplingJobs(id),
+        api.getCorrelations(id),
       ])
       setAudience(aud)
       setPersonas(ps)
       setPromptTemplate(aud.backstory_prompt_template ?? '')
+      // Hydrate correlation matrix from saved values
+      const corrMap: Record<string, string> = {}
+      for (const c of corrs) {
+        const a = c.var_a_id, b = c.var_b_id
+        const key = a < b ? `${a}__${b}` : `${b}__${a}`
+        corrMap[key] = String(c.correlation)
+      }
+      setCorrValues(corrMap)
       // Restore active job if the most recent one is still running/stopped
       if (jobs.length > 0 && (jobs[0].status === 'running' || jobs[0].status === 'stopped')) {
         setActiveJob(jobs[0])

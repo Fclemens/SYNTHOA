@@ -249,6 +249,8 @@ export const api = {
   deleteVariable: (audienceId: string, varId: string) =>
     req<void>("DELETE", `/api/audiences/${audienceId}/variables/${varId}`),
 
+  getCorrelations: (audienceId: string) =>
+    req<{ var_a_id: string; var_b_id: string; correlation: number }[]>("GET", `/api/audiences/${audienceId}/correlations`),
   upsertCorrelations: (audienceId: string, correlations: { var_a_id: string; var_b_id: string; correlation: number }[]) =>
     req<{ status: string; count: number }>("PUT", `/api/audiences/${audienceId}/correlations`, { correlations }),
 

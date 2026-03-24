@@ -198,6 +198,17 @@ async def delete_variable(audience_id: str, var_id: str, db: AsyncSession = Depe
 
 # ── Correlations ──────────────────────────────────────────────────────────────
 
+@router.get("/{audience_id}/correlations")
+async def get_correlations(audience_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(VariableCorrelation).where(VariableCorrelation.audience_id == audience_id)
+    )
+    return [
+        {"var_a_id": c.var_a_id, "var_b_id": c.var_b_id, "correlation": c.correlation}
+        for c in result.scalars().all()
+    ]
+
+
 @router.put("/{audience_id}/correlations", status_code=200)
 async def upsert_correlations(audience_id: str, body: CorrelationUpsert, db: AsyncSession = Depends(get_db)):
     audience = await db.get(Audience, audience_id)
