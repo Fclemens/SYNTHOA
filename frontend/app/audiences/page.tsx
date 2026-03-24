@@ -6,7 +6,6 @@ import { api, Audience, AudienceExportBundle } from '@/lib/api'
 import { fmtDate } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody } from '@/components/ui/Card'
-import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { useToast } from '@/components/ui/Toast'
@@ -194,9 +193,17 @@ export default function AudiencesPage() {
                 <CardBody>
                   <div className="flex items-start justify-between gap-2 pr-14">
                     <h2 className="font-semibold text-gray-900 leading-tight">{audience.name}</h2>
-                    <Badge color={audience.persona_count ? 'green' : 'gray'}>
-                      {audience.persona_count ?? 0} personas
-                    </Badge>
+                    <span
+                      title={`${audience.persona_count ?? 0} personas`}
+                      className="flex items-center gap-1 text-xs shrink-0 text-gray-400"
+                    >
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a4 4 0 00-5.356-3.712M9 20H4v-2a4 4 0 015.356-3.712M15 7a4 4 0 11-8 0 4 4 0 018 0zm6 4a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                      <span className={audience.persona_count ? 'text-green-600 font-medium' : ''}>
+                        {audience.persona_count ?? 0}
+                      </span>
+                    </span>
                   </div>
                   {audience.description && (
                     <p className="mt-2 text-sm text-gray-500 line-clamp-2">{audience.description}</p>
