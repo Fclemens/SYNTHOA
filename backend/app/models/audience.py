@@ -95,6 +95,7 @@ class SamplingJob(Base):
     n_requested: Mapped[int] = mapped_column(Integer, nullable=False)
     n_completed: Mapped[int] = mapped_column(Integer, default=0)
     backstory_mode: Mapped[str] = mapped_column(String, default="llm")
+    generate_backstories: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")  # legacy compat
     validate_plausibility: Mapped[bool] = mapped_column(Boolean, default=True)
     llm_validation: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
