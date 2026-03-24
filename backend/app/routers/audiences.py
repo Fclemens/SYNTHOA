@@ -35,7 +35,7 @@ async def _get_audience_full(audience_id: str, db: AsyncSession) -> Audience:
     result = await db.execute(
         select(Audience)
         .where(Audience.id == audience_id)
-        .options(selectinload(Audience.variables))
+        .options(selectinload(Audience.variables), selectinload(Audience.personas))
     )
     audience = result.scalars().first()
     if not audience:
