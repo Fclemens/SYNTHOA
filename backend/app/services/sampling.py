@@ -323,6 +323,8 @@ async def sample_correlated_population(
                     value = clip_to_bounds(value, var.distribution)
                     if var.distribution.get("normalize_labels") or var.distribution.get("bucket_labels"):
                         traits[var.name] = bucket_label(value, var.distribution)
+                    elif var.distribution.get("round_to_int"):
+                        traits[var.name] = int(round(value))
                     else:
                         traits[var.name] = round(value, 2)
 

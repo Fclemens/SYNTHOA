@@ -33,6 +33,8 @@ interface VarFormState {
   alpha: string
   beta: string
   lambda: string
+  // output options
+  round_to_int: boolean
   // bucket label normalisation
   normalize_labels: boolean
   bucket_labels: string[]   // custom ordered labels; length determines bucket count
@@ -61,6 +63,7 @@ const defaultForm = (): VarFormState => ({
   mode: '0.5',
   alpha: '2', beta: '5',
   lambda: '2',
+  round_to_int: false,
   normalize_labels: false,
   bucket_labels: [...DEFAULT_BUCKET_PRESETS[5]],
   cat_options: [{ label: 'Option A', weight: 50 }, { label: 'Option B', weight: 50 }],
@@ -69,6 +72,7 @@ const defaultForm = (): VarFormState => ({
 
 function buildDistribution(form: VarFormState): Record<string, unknown> {
   const n = (s: string) => parseFloat(s) || 0
+  const ri = form.round_to_int ? { round_to_int: true } : {}
   const nl = form.normalize_labels
     ? { normalize_labels: true, bucket_labels: form.bucket_labels.filter(l => l.trim() !== '') }
     : {}
@@ -86,23 +90,23 @@ function buildDistribution(form: VarFormState): Record<string, unknown> {
   }
   switch (form.dist_type) {
     case 'normal':
-      return { type: 'normal', mean: n(form.mean), std: n(form.std), ...nl }
+      return { type: 'normal', mean: n(form.mean), std: n(form.std), ...ri, ...nl }
     case 'log_normal':
-      return { type: 'log_normal', real_mean: n(form.real_mean), real_std: n(form.real_std), ...nl }
+      return { type: 'log_normal', real_mean: n(form.real_mean), real_std: n(form.real_std), ...ri, ...nl }
     case 'uniform':
-      return { type: 'uniform', min: n(form.min), max: n(form.max), ...nl }
+      return { type: 'uniform', min: n(form.min), max: n(form.max), ...ri, ...nl }
     case 'triangular':
-      return { type: 'triangular', min: n(form.min), max: n(form.max), mode: n(form.mode), ...nl }
+      return { type: 'triangular', min: n(form.min), max: n(form.max), mode: n(form.mode), ...ri, ...nl }
     case 'beta':
-      return { type: 'beta', alpha: n(form.alpha), beta: n(form.beta), ...nl }
+      return { type: 'beta', alpha: n(form.alpha), beta: n(form.beta), ...ri, ...nl }
     case 'exponential':
-      return { type: 'exponential', lambda: n(form.lambda), ...nl }
+      return { type: 'exponential', lambda: n(form.lambda), ...ri, ...nl }
     case 'gamma':
-      return { type: 'gamma', alpha: n(form.alpha), beta: n(form.beta), ...nl }
+      return { type: 'gamma', alpha: n(form.alpha), beta: n(form.beta), ...ri, ...nl }
     case 'truncated_normal':
-      return { type: 'truncated_normal', mean: n(form.mean), std: n(form.std), min: n(form.min), max: n(form.max), ...nl }
+      return { type: 'truncated_normal', mean: n(form.mean), std: n(form.std), min: n(form.min), max: n(form.max), ...ri, ...nl }
     case 'poisson':
-      return { type: 'poisson', lambda: n(form.lambda), ...nl }
+      return { type: 'poisson', lambda: n(form.lambda), ...ri, ...nl }
     case 'weibull':
       return { type: 'weibull', shape: n(form.alpha), scale: n(form.beta), ...nl }
     default:
@@ -301,6 +305,20 @@ function VariableFormFields({
               </div>
             </div>
           )}
+
+          {/* Round to integer */}
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="round_to_int"
+              checked={form.round_to_int}
+              onChange={e => set({ round_to_int: e.target.checked })}
+              className="rounded border-gray-300 text-indigo-600"
+            />
+            <label htmlFor="round_to_int" className="text-sm text-gray-700 cursor-pointer">
+              Round to nearest integer <span className="text-gray-400 text-xs">(e.g. age 34, income 52000)</span>
+            </label>
+          </div>
 
           {/* Bucket label normalisation */}
           <div className="rounded-lg bg-gray-50 px-3 py-2.5 border border-gray-200 space-y-3">
@@ -830,6 +848,7 @@ export default function AudienceDetailPage() {
         )
       }
     }
+    form.round_to_int = !!(dist.round_to_int)
     form.normalize_labels = !!(dist.normalize_labels || dist.bucket_labels)
     if (Array.isArray(dist.bucket_labels) && (dist.bucket_labels as string[]).length >= 2) {
       form.bucket_labels = dist.bucket_labels as string[]
