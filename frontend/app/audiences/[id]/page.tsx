@@ -529,7 +529,7 @@ export default function AudienceDetailPage() {
   const [sampling, setSampling] = useState(false)
   const [sampleForm, setSampleForm] = useState({
     n: 10,
-    backstory_mode: 'llm' as 'none' | 'template' | 'llm',
+    backstory_mode: 'none' as 'none' | 'template' | 'llm',
     reuse_existing: false,
   })
 
