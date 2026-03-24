@@ -496,6 +496,35 @@ export default function AudienceDetailPage() {
   const [savingTemplate, setSavingTemplate] = useState(false)
   const templateRef = useRef<HTMLTextAreaElement>(null)
 
+  // Inline name editing
+  const [editingName, setEditingName] = useState(false)
+  const [nameInput, setNameInput] = useState('')
+  const [savingName, setSavingName] = useState(false)
+  const nameInputRef = useRef<HTMLInputElement>(null)
+
+  function startEditName() {
+    if (!audience) return
+    setNameInput(audience.name)
+    setEditingName(true)
+    setTimeout(() => nameInputRef.current?.select(), 0)
+  }
+
+  async function saveAudienceName() {
+    if (!audience || !nameInput.trim()) return
+    if (nameInput.trim() === audience.name) { setEditingName(false); return }
+    try {
+      setSavingName(true)
+      const updated = await api.updateAudience(audience.id, { name: nameInput.trim() })
+      setAudience(updated)
+      setEditingName(false)
+      toast('Audience renamed', 'success')
+    } catch {
+      toast('Failed to rename audience', 'error')
+    } finally {
+      setSavingName(false)
+    }
+  }
+
   // Delete audience
   const [deleteAudienceConfirm, setDeleteAudienceConfirm] = useState(false)
   const [deletingAudience, setDeletingAudience] = useState(false)
@@ -856,7 +885,47 @@ export default function AudienceDetailPage() {
       <div className="mb-8 flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-gray-900">{audience.name}</h1>
+            {editingName ? (
+              <div className="flex items-center gap-2">
+                <input
+                  ref={nameInputRef}
+                  type="text"
+                  value={nameInput}
+                  onChange={e => setNameInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') saveAudienceName(); if (e.key === 'Escape') setEditingName(false) }}
+                  className="text-2xl font-bold text-gray-900 border-b-2 border-indigo-500 outline-none bg-transparent w-72"
+                  disabled={savingName}
+                  autoFocus
+                />
+                <button
+                  onClick={saveAudienceName}
+                  disabled={savingName || !nameInput.trim()}
+                  className="text-xs px-2 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {savingName ? '…' : 'Save'}
+                </button>
+                <button
+                  onClick={() => setEditingName(false)}
+                  disabled={savingName}
+                  className="text-xs px-2 py-1 rounded bg-gray-100 text-gray-600 hover:bg-gray-200"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 group">
+                <h1 className="text-2xl font-bold text-gray-900">{audience.name}</h1>
+                <button
+                  onClick={startEditName}
+                  title="Rename audience"
+                  className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-indigo-600 p-1 rounded"
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 012.828 2.828L11.828 15.828a2 2 0 01-1.415.586H8v-2.414A2 2 0 018.586 12.5L9 13z" />
+                  </svg>
+                </button>
+              </div>
+            )}
             <Badge color="indigo">{variables.length} variable{variables.length !== 1 ? 's' : ''}</Badge>
           </div>
           {audience.description && (
