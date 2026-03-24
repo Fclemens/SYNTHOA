@@ -21,7 +21,6 @@ interface CatOption { label: string; weight: number }
 interface VarFormState {
   name: string
   var_type: 'continuous' | 'categorical' | 'ordinal'
-  sort_order: number
   dist_type: DistType
   // continuous params
   mean: string
@@ -34,17 +33,27 @@ interface VarFormState {
   alpha: string
   beta: string
   lambda: string
+  // bucket label normalisation
   normalize_labels: boolean
+  bucket_labels: string[]   // custom ordered labels; length determines bucket count
   // categorical options
   cat_options: CatOption[]
   // ordinal options (ordered labels, lowest → highest)
   ordinal_options: string[]
 }
 
+const DEFAULT_BUCKET_PRESETS: Record<number, string[]> = {
+  2: ['Low', 'High'],
+  3: ['Low', 'Medium', 'High'],
+  4: ['Low', 'Medium-Low', 'Medium-High', 'High'],
+  5: ['Very Low', 'Low', 'Medium', 'High', 'Very High'],
+  6: ['Very Low', 'Low', 'Medium-Low', 'Medium-High', 'High', 'Very High'],
+  7: ['Very Low', 'Low', 'Below Average', 'Average', 'Above Average', 'High', 'Very High'],
+}
+
 const defaultForm = (): VarFormState => ({
   name: '',
   var_type: 'continuous',
-  sort_order: 0,
   dist_type: 'truncated_normal',
   mean: '40', std: '15',
   real_mean: '50000', real_std: '20000',
@@ -53,13 +62,16 @@ const defaultForm = (): VarFormState => ({
   alpha: '2', beta: '5',
   lambda: '2',
   normalize_labels: false,
+  bucket_labels: [...DEFAULT_BUCKET_PRESETS[5]],
   cat_options: [{ label: 'Option A', weight: 50 }, { label: 'Option B', weight: 50 }],
   ordinal_options: ['Low', 'Medium', 'High'],
 })
 
 function buildDistribution(form: VarFormState): Record<string, unknown> {
   const n = (s: string) => parseFloat(s) || 0
-  const nl = form.normalize_labels ? { normalize_labels: true } : {}
+  const nl = form.normalize_labels
+    ? { normalize_labels: true, bucket_labels: form.bucket_labels.filter(l => l.trim() !== '') }
+    : {}
   if (form.var_type === 'ordinal') {
     return {
       type: 'ordinal',
@@ -141,36 +153,24 @@ function VariableFormFields({
         />
       </div>
 
-      {/* var_type + sort_order row */}
-      <div className={rowCls}>
-        <div>
-          <label className={labelCls}>Variable type</label>
-          <select
-            value={form.var_type}
-            onChange={e => {
-              const vt = e.target.value as 'continuous' | 'categorical' | 'ordinal'
-              set({
-                var_type: vt,
-                dist_type: vt === 'categorical' ? 'categorical' : vt === 'ordinal' ? 'ordinal' : 'truncated_normal',
-              })
-            }}
-            className={inputCls}
-          >
-            <option value="continuous">Continuous (numeric)</option>
-            <option value="categorical">Categorical (nominal)</option>
-            <option value="ordinal">Ordinal (ordered categories)</option>
-          </select>
-        </div>
-        <div>
-          <label className={labelCls}>Sort order</label>
-          <input
-            type="number"
-            min={0}
-            value={form.sort_order}
-            onChange={e => set({ sort_order: parseInt(e.target.value) || 0 })}
-            className={inputCls}
-          />
-        </div>
+      {/* var_type row */}
+      <div>
+        <label className={labelCls}>Variable type</label>
+        <select
+          value={form.var_type}
+          onChange={e => {
+            const vt = e.target.value as 'continuous' | 'categorical' | 'ordinal'
+            set({
+              var_type: vt,
+              dist_type: vt === 'categorical' ? 'categorical' : vt === 'ordinal' ? 'ordinal' : 'truncated_normal',
+            })
+          }}
+          className={inputCls}
+        >
+          <option value="continuous">Continuous (numeric)</option>
+          <option value="categorical">Categorical (nominal)</option>
+          <option value="ordinal">Ordinal (ordered categories)</option>
+        </select>
       </div>
 
       {/* ── Continuous distribution ── */}
@@ -302,23 +302,72 @@ function VariableFormFields({
             </div>
           )}
 
-          {/* Quintile normalisation */}
-          <div className="flex items-start gap-2 rounded-lg bg-gray-50 px-3 py-2.5 border border-gray-200">
-            <input
-              type="checkbox"
-              id="normalize_labels"
-              checked={form.normalize_labels}
-              onChange={e => set({ normalize_labels: e.target.checked })}
-              className="mt-0.5 rounded border-gray-300 text-indigo-600"
-            />
-            <div>
+          {/* Bucket label normalisation */}
+          <div className="rounded-lg bg-gray-50 px-3 py-2.5 border border-gray-200 space-y-3">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="normalize_labels"
+                checked={form.normalize_labels}
+                onChange={e => set({ normalize_labels: e.target.checked })}
+                className="rounded border-gray-300 text-indigo-600"
+              />
               <label htmlFor="normalize_labels" className="text-sm font-medium text-gray-700 cursor-pointer">
-                Normalise to quintile labels
+                Normalise to bucket labels
               </label>
-              <p className="text-xs text-gray-400 mt-0.5">
-                Replace the numeric value with <span className="font-medium">Very Low / Low / Medium / High / Very High</span> based on the distribution&apos;s theoretical quintile boundaries.
-              </p>
             </div>
+            {form.normalize_labels && (
+              <div className="space-y-2">
+                {/* Preset picker */}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-500 shrink-0">Preset:</span>
+                  {[2,3,4,5,6,7].map(n => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => set({ bucket_labels: [...DEFAULT_BUCKET_PRESETS[n]] })}
+                      className={`text-xs px-2 py-0.5 rounded border ${form.bucket_labels.length === n ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-400'}`}
+                    >
+                      {n === 2 ? 'Binary' : n === 3 ? 'Tertile' : n === 4 ? 'Quartile' : n === 5 ? 'Quintile' : n === 6 ? 'Sextile' : 'Septile'}
+                    </button>
+                  ))}
+                </div>
+                {/* Editable label list */}
+                <div className="space-y-1">
+                  {form.bucket_labels.map((lbl, i) => (
+                    <div key={i} className="flex items-center gap-1.5">
+                      <span className="text-xs text-gray-400 w-4 text-right shrink-0">{i + 1}.</span>
+                      <input
+                        type="text"
+                        value={lbl}
+                        onChange={e => {
+                          const next = [...form.bucket_labels]
+                          next[i] = e.target.value
+                          set({ bucket_labels: next })
+                        }}
+                        className="flex-1 text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                        placeholder={`Label ${i + 1}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => set({ bucket_labels: form.bucket_labels.filter((_, j) => j !== i) })}
+                        disabled={form.bucket_labels.length <= 2}
+                        className="text-gray-300 hover:text-red-400 disabled:opacity-30 text-sm leading-none"
+                        title="Remove bucket"
+                      >✕</button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => set({ bucket_labels: [...form.bucket_labels, `Label ${form.bucket_labels.length + 1}`] })}
+                    className="text-xs text-indigo-600 hover:text-indigo-800 mt-1"
+                  >+ Add bucket</button>
+                </div>
+                <p className="text-xs text-gray-400">
+                  {form.bucket_labels.length} equal-probability buckets · lowest → highest
+                </p>
+              </div>
+            )}
           </div>
         </>
       )}
@@ -693,7 +742,7 @@ export default function AudienceDetailPage() {
         name: varForm.name.trim(),
         var_type: varForm.var_type,
         distribution: buildDistribution(varForm),
-        sort_order: varForm.sort_order,
+        sort_order: 0,
       })
       setVarModalOpen(false)
       setVarForm(defaultForm())
@@ -715,7 +764,6 @@ export default function AudienceDetailPage() {
       ...defaultForm(),
       name: v.name,
       var_type: v.var_type,
-      sort_order: v.sort_order,
       dist_type: v.var_type === 'categorical' ? 'categorical' : v.var_type === 'ordinal' ? 'ordinal' : distType,
     }
     if (distType === 'normal') {
@@ -755,7 +803,10 @@ export default function AudienceDetailPage() {
       const opts = dist.options as string[] | undefined
       form.ordinal_options = opts ?? ['Low', 'Medium', 'High']
     }
-    form.normalize_labels = !!(dist.normalize_labels)
+    form.normalize_labels = !!(dist.normalize_labels || dist.bucket_labels)
+    if (Array.isArray(dist.bucket_labels) && (dist.bucket_labels as string[]).length >= 2) {
+      form.bucket_labels = dist.bucket_labels as string[]
+    }
     setEditVar(v)
     setEditForm(form)
   }
@@ -769,7 +820,7 @@ export default function AudienceDetailPage() {
         name: editForm.name.trim(),
         var_type: editForm.var_type,
         distribution: buildDistribution(editForm),
-        sort_order: editForm.sort_order,
+        sort_order: 0,
       })
       setEditVar(null)
       toast('Variable updated', 'success')
@@ -986,7 +1037,6 @@ export default function AudienceDetailPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 bg-gray-50">
-                    <th className="px-4 py-3 text-left font-medium text-gray-600">#</th>
                     <th className="px-4 py-3 text-left font-medium text-gray-600">Name</th>
                     <th className="px-4 py-3 text-left font-medium text-gray-600">Type</th>
                     <th className="px-4 py-3 text-left font-medium text-gray-600">Distribution</th>
@@ -996,7 +1046,6 @@ export default function AudienceDetailPage() {
                 <tbody className="divide-y divide-gray-100">
                   {variables.map(v => (
                     <tr key={v.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 text-gray-400 text-xs">{v.sort_order}</td>
                       <td className="px-4 py-3">
                         <span className="font-medium text-gray-900">{v.name}</span>
                       </td>

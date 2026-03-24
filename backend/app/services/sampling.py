@@ -117,23 +117,39 @@ def sample_categorical(dist: dict[str, Any]) -> str:
     return random.choices(labels, weights=weights, k=1)[0]
 
 
-# ── Quintile label normalisation ───────────────────────────────────────────────
+# ── Bucket label normalisation ─────────────────────────────────────────────────
 
-QUINTILE_LABELS = ["Very Low", "Low", "Medium", "High", "Very High"]
+DEFAULT_BUCKET_LABELS = {
+    2: ["Low", "High"],
+    3: ["Low", "Medium", "High"],
+    4: ["Low", "Medium-Low", "Medium-High", "High"],
+    5: ["Very Low", "Low", "Medium", "High", "Very High"],
+    6: ["Very Low", "Low", "Medium-Low", "Medium-High", "High", "Very High"],
+    7: ["Very Low", "Low", "Below Average", "Average", "Above Average", "High", "Very High"],
+}
 
-def quintile_label(value: float, dist: dict[str, Any]) -> str:
-    """Map a sampled numeric value to a quintile label using theoretical distribution quantiles."""
+def bucket_label(value: float, dist: dict[str, Any]) -> str:
+    """Map a sampled numeric value to a label bucket using theoretical distribution quantiles.
+
+    dist may contain:
+      normalize_labels: true  (legacy — use 5 default buckets)
+      bucket_labels: ["A","B","C",...]  (custom ordered labels, count = n buckets)
+    """
+    labels: list[str] = dist.get("bucket_labels") or DEFAULT_BUCKET_LABELS[5]
+    n = len(labels)
+    # Build n-1 threshold percentiles evenly spaced
+    percentiles = [(i + 1) / n for i in range(n - 1)]
     thresholds = []
-    for p in (0.2, 0.4, 0.6, 0.8):
+    for p in percentiles:
         u = max(1e-6, min(1 - 1e-6, p))
         try:
             thresholds.append(inverse_cdf(dist, u))
         except Exception:
-            thresholds.append(value)  # fallback: all values end up in same bin
+            thresholds.append(value)
     for i, threshold in enumerate(thresholds):
         if value < threshold:
-            return QUINTILE_LABELS[i]
-    return QUINTILE_LABELS[4]
+            return labels[i]
+    return labels[-1]
 
 
 def evaluate_condition(expr: dict[str, Any], traits: dict[str, Any]) -> bool:
@@ -244,8 +260,8 @@ async def sample_correlated_population(
                 else:
                     # Continuous
                     value = clip_to_bounds(value, var.distribution)
-                    if var.distribution.get("normalize_labels"):
-                        traits[var.name] = quintile_label(value, var.distribution)
+                    if var.distribution.get("normalize_labels") or var.distribution.get("bucket_labels"):
+                        traits[var.name] = bucket_label(value, var.distribution)
                     else:
                         traits[var.name] = round(value, 2)
 
