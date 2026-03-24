@@ -1,0 +1,227 @@
+AUDIENCES MODULE — REFERENCE
+==============================
+
+CONCEPT
+Audience = a statistical population model. Defines variables with distributions,
+correlations between them, conditional rules, and a backstory generation config.
+Used to generate Persona objects (synthetic respondents) for simulation runs.
+
+---
+
+DATA MODEL
+Audience { id, name, description, backstory_prompt_template, variables[] }
+AudienceVariable { id, name, var_type, distribution }
+Persona { id, audience_id, traits_json, backstory }
+
+---
+
+VARIABLE TYPES
+
+── CONTINUOUS ──────────────────────────────────────────────────────────────────
+Numeric variables sampled from a statistical distribution.
+Output is a float (rounded to 2 dp) unless round_to_int or bucket labels active.
+
+  truncated_normal(mean, std, min, max)   ← DEFAULT
+    Bell curve hard-bounded between min and max. Best for age, scores, ratings.
+    Example: age with mean=40, std=15, min=18, max=80 never produces 0 or 120.
+
+  normal(mean, std)
+    Unbounded bell curve. Use only when negative/extreme values are acceptable.
+
+  log_normal(real_mean, real_std)
+    Right-skewed. Inputs are the desired mean and std of the actual values
+    (not the log). Best for income, spend, prices — never goes negative.
+
+  uniform(min, max)
+    Equal probability across the range. Use for truly flat distributions.
+
+  triangular(min, max, mode)
+    Peaked distribution with hard bounds. mode = most likely value.
+    Good when you know the typical value and the hard limits.
+
+  beta(alpha, beta)
+    Always outputs 0–1. alpha>1 and beta>1 = bell shape inside [0,1].
+    alpha=beta = symmetric; alpha<beta = left-skewed; alpha>beta = right-skewed.
+    Use for proportions, probabilities, satisfaction scores on a 0–1 scale.
+
+  gamma(alpha, beta)
+    Right-skewed, always positive. alpha = shape (higher = more symmetric),
+    beta = scale (higher = more spread). Use for waiting times, spending events.
+
+  exponential(lambda)
+    Memoryless decay: most values near 0, long right tail. lambda = rate (1/mean).
+    Use for time-between-events, response times, rare but unbounded quantities.
+
+  poisson(lambda)
+    Discrete integer counts. lambda = mean = variance.
+    Use for number of purchases, visits, children — anything that is a count.
+    Output is always a whole number.
+
+  weibull(shape, scale)
+    Lifetime / tenure modelling. shape (k) controls hazard behaviour:
+      k < 1  → early churn (most failures happen early, e.g. app dropout)
+      k = 1  → constant failure rate (equivalent to exponential)
+      k > 1  → wear-out (failures increase over time, e.g. subscription tenure)
+    scale (λ) = characteristic lifetime value (63rd percentile roughly).
+
+OUTPUT OPTIONS FOR CONTINUOUS VARIABLES
+
+  round_to_int — checkbox
+    Rounds the sampled float to the nearest integer before storing.
+    Use for age, headcount, number of rooms — avoids 34.78 confusing LLMs.
+    Applied before bucket labels if both flags are set (bucket labels take
+    precedence and output a string, not a number).
+
+  Bucket label normalisation — checkbox + editor
+    Replaces the numeric value with an ordered label string based on equal-
+    probability quantile cuts of the theoretical distribution.
+    Presets:
+      Binary   (2 buckets): Low / High
+      Tertile  (3):         Low / Medium / High
+      Quartile (4):         Low / Medium-Low / Medium-High / High
+      Quintile (5):         Very Low / Low / Medium / High / Very High  ← default
+      Sextile  (6):         Very Low / Low / Medium-Low / Medium-High / High / Very High
+      Septile  (7):         Very Low / Low / Below Average / Average / Above Average / High / Very High
+    Each label is individually editable. Add/remove buckets freely.
+    Thresholds are always equal-probability (e.g. quintile = each bucket ~20%).
+
+── CATEGORICAL ─────────────────────────────────────────────────────────────────
+Discrete unordered labels. Output is always a string.
+{ options: [{label, weight}, ...] }
+Weights are relative (not percentages) — they are normalised internally.
+Example: Male 50 / Female 50 / Non-binary 5 → ~47.6% / ~47.6% / ~4.8%.
+
+Binary categoricals (exactly 2 options) automatically participate in the
+Gaussian copula and can be correlated with continuous and ordinal variables.
+Multi-option categoricals are sampled independently (no copula participation)
+but can still be driven by conditional rules.
+
+── ORDINAL ──────────────────────────────────────────────────────────────────────
+Discrete ordered labels with weights. Output is always a string.
+{ options: [{label, weight}, ...] }  — ordered lowest → highest
+
+Each level has a weight controlling its relative sampling frequency.
+The live % column shows the normalised probability as you edit.
+Weights work identically to categorical: relative, normalised internally.
+  Example: Low 20 / Medium 50 / High 30 → 20% / 50% / 30%
+
+Ordinal variables participate in the Gaussian copula — they can be correlated
+with continuous variables and binary categoricals.
+Correlation mechanism: the copula produces a uniform u ∈ (0,1) respecting the
+correlation structure, then cumulative weight thresholds map u to a label:
+  u=0.15 with weights [20,50,30] → cumulative [0.20, 0.70, 1.0] → "Low"
+  u=0.45 → "Medium"
+  u=0.80 → "High"
+So a high-income persona (high u_income) also tends toward high u_education
+when positively correlated, which pushes toward "High" education — while
+the weights still control the overall marginal frequency.
+
+Reordering: ↑↓ buttons change the rank order (lowest-to-highest) of labels.
+Minimum 2 levels enforced.
+
+Legacy: variables saved before the weighted ordinal update (plain string[])
+are auto-converted to equal weights when opened for editing.
+
+---
+
+CORRELATION MATRIX
+Pairwise Pearson-like correlations between copula-eligible variables.
+Eligible: continuous + ordinal + binary categorical.
+Range: –1.0 to +1.0.
+
+Mechanism:
+1. Build k×k correlation matrix R from stored pairs (off-diagonal = user values).
+2. If R is not positive-semidefinite (contradictory correlations), auto-correct
+   via eigenvalue clamping (nearest PSD). Silent — no error shown.
+3. Cholesky decompose R → L. Sample Z ~ N(0,I). Correlated Z = Z @ L.T
+4. Convert to uniform: u = Φ(z) per variable.
+5. Apply each variable's inverse CDF to get final trait values.
+
+Correlations are persisted to DB and restored on page reload.
+Colour coding in UI: blue = continuous, purple = ordinal, green = binary.
+
+---
+
+CONDITIONAL RULES
+Post-sampling overrides applied to non-binary categorical variables.
+If condition on var_X is true → replace var_Y's distribution with override_dist.
+Conditions: <, <=, >, >=, ==, !=  against a threshold value.
+Evaluated after copula sampling in topological order (dependencies resolved
+automatically so cat→cat rules referencing earlier variables always work).
+
+---
+
+BACKSTORY GENERATION (3 modes, selected at sampling time)
+none      — traits_json only, no text backstory, no LLM cost
+template  — substitutes {variable_name} tokens in prompt template, no LLM
+llm       — renders template then calls LLM → 150–250 word first-person narrative
+            (temp=0.5, max 400 tokens; falls back to template on failure)
+
+Prompt template editor:
+- Click a variable chip to insert {variable_name} at cursor position
+- Used variables shown with ✓ and greyed
+- Unknown {tokens} highlighted as invalid, blocks saving
+- Variable names with spaces work: {House Size}, {Energy Stress level}
+
+Default backstory mode in sampling modals is "none" to avoid accidental API calls.
+
+---
+
+SAMPLING
+POST /api/audiences/{id}/sample
+  body: { n, backstory_mode, reuse_existing }
+  reuse_existing=true → returns existing personas first, only generates gap.
+
+POST /api/audiences/{id}/sample/fresh
+  body: { n, backstory_mode }
+  Deletes all existing personas first, then generates n new ones.
+
+Returns SamplingJob (async, 202). Job monitor shows progress bar.
+
+Job controls:
+  Pause  — halts after current persona, allows resume
+  Resume — continues from n_completed
+  Cancel — permanently closes job, keeps personas already sampled
+
+---
+
+CRUD ENDPOINTS
+GET    /api/audiences                      list all (includes persona_count)
+POST   /api/audiences                      create { name, description }
+GET    /api/audiences/{id}                 get with variables
+PUT    /api/audiences/{id}                 update name/description/template
+DELETE /api/audiences/{id}                 delete audience + personas
+POST   /api/audiences/{id}/duplicate       copy variables + correlations, no personas
+
+POST   /api/audiences/{id}/variables       add variable
+PUT    /api/audiences/{id}/variables/{vid} edit variable
+DELETE /api/audiences/{id}/variables/{vid} delete variable
+
+GET    /api/audiences/{id}/correlations    get saved correlation pairs
+PUT    /api/audiences/{id}/correlations    upsert correlation matrix
+
+GET    /api/audiences/{id}/personas        list personas
+DELETE /api/audiences/{id}/personas        clear all personas
+
+GET    /api/audiences/{id}/export          export JSON bundle (optionally incl. personas)
+POST   /api/audiences/import               import JSON bundle
+
+---
+
+UI FEATURES (frontend)
+- Audience list: create, open, duplicate (copy icon), delete
+  · Persona count shown as people icon + number (green if >0), tooltip on hover
+- Audience detail: inline name editing (hover title → pencil icon → input)
+- Variable form:
+  · Continuous: distribution selector + params + round_to_int checkbox
+    + bucket label normalisation (preset buttons + editable label list)
+  · Categorical: label + weight list, live % column
+  · Ordinal: ordered label + weight list, live % column, ↑↓ reorder
+- Correlation matrix: colour-coded dots, editable cells, persisted on save
+- Backstory section: 3-way radio (none/template/llm) + prompt template editor
+  with cursor-position chip insertion, used-var greying, invalid token guard
+- Sampling modal: n, backstory mode (default: none), reuse toggle
+- Start Fresh modal: n, backstory mode — deletes all personas first
+- Job monitor: progress bar, Pause / Resume / Cancel buttons
+- Persona cards: paginated, shows traits + backstory
+- Export/Import JSON bundle
