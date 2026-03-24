@@ -8,7 +8,7 @@ from sqlalchemy import text
 from .config import load_overrides
 from .database import init_db, engine
 from .routers import (
-    audiences_router, calibration_router,
+    audiences_router, analysis_router, calibration_router,
     experiments_router, runs_router, settings_router,
 )
 
@@ -20,6 +20,8 @@ async def _migrate_db() -> None:
     migrations = [
         "ALTER TABLE audiences ADD COLUMN backstory_prompt_template TEXT",
         "ALTER TABLE experiments ADD COLUMN drift_detection_enabled BOOLEAN NOT NULL DEFAULT 1",
+        "ALTER TABLE simulation_runs ADD COLUMN analysis_cache JSON",
+        "ALTER TABLE sampling_jobs ADD COLUMN backstory_mode TEXT NOT NULL DEFAULT 'llm'",
     ]
     async with engine.begin() as conn:
         for stmt in migrations:
@@ -65,6 +67,7 @@ app.include_router(experiments_router)
 app.include_router(runs_router)
 app.include_router(calibration_router)
 app.include_router(settings_router)
+app.include_router(analysis_router)
 
 
 @app.get("/health")

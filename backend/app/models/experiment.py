@@ -18,7 +18,6 @@ class Experiment(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     global_context: Mapped[str] = mapped_column(String, nullable=False, default="")
     execution_mode: Mapped[str] = mapped_column(String, nullable=False, default="pooled")  # "pooled" | "dedicated"
-    synonym_injection_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     drift_detection_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -27,9 +26,6 @@ class Experiment(Base):
     )
     dist_variables: Mapped[list["ExperimentDistVariable"]] = relationship(
         back_populates="experiment", cascade="all, delete-orphan", order_by="ExperimentDistVariable.sort_order"
-    )
-    synonym_sets: Mapped[list["SynonymSet"]] = relationship(
-        back_populates="experiment", cascade="all, delete-orphan"
     )
     questions: Mapped[list["Question"]] = relationship(
         back_populates="experiment", cascade="all, delete-orphan", order_by="Question.sort_order"
@@ -64,17 +60,6 @@ class ExperimentDistVariable(Base):
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
 
     experiment: Mapped["Experiment"] = relationship(back_populates="dist_variables")
-
-
-class SynonymSet(Base):
-    __tablename__ = "synonym_sets"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    experiment_id: Mapped[str] = mapped_column(String, ForeignKey("experiments.id", ondelete="CASCADE"), nullable=False)
-    canonical: Mapped[str] = mapped_column(String, nullable=False)
-    synonyms: Mapped[list] = mapped_column(JSON, nullable=False)  # ["word1", "word2", ...]
-
-    experiment: Mapped["Experiment"] = relationship(back_populates="synonym_sets")
 
 
 class Question(Base):

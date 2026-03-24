@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
-from ..models.experiment import Experiment, ExperimentDistVariable, ExperimentVariable, OutputSchema, Question, SynonymSet
+from ..models.experiment import Experiment, ExperimentDistVariable, ExperimentVariable, OutputSchema, Question
 from ..models.audience import Persona
 from ..models.simulation import SimulationRun, SimulationTask
 from ..services.backstory import _build_default_backstory, generate_backstory
@@ -27,7 +27,7 @@ from ..services.drift_detection import (
 from ..services.extraction import extract_with_confidence
 from ..services.llm_client import call_llm_messages, get_price
 from ..services.prompt_assembly import build_dedicated_messages, build_pooled_prompt, estimate_message_tokens
-from ..services.variable_resolution import apply_synonym_injection, resolve_dist_variables, resolve_variables
+from ..services.variable_resolution import resolve_dist_variables, resolve_variables
 
 logger = logging.getLogger(__name__)
 
@@ -73,11 +73,6 @@ async def _load_experiment_config(experiment_id: str, db: AsyncSession) -> dict[
     )
     dist_vars = dist_vars_result.scalars().all()
 
-    syn_result = await db.execute(
-        select(SynonymSet).where(SynonymSet.experiment_id == experiment_id)
-    )
-    synonym_sets = syn_result.scalars().all()
-
     q_result = await db.execute(
         select(Question).where(Question.experiment_id == experiment_id).order_by(Question.sort_order)
     )
@@ -94,7 +89,6 @@ async def _load_experiment_config(experiment_id: str, db: AsyncSession) -> dict[
         "experiment": exp,
         "exp_vars": exp_vars,
         "dist_vars": dist_vars,
-        "synonym_sets": synonym_sets,
         "questions": questions,
         "output_schema": schema.schema_json if schema else [],
     }
@@ -117,7 +111,6 @@ async def _run_pooled_interview(
     exp = config["experiment"]
     exp_vars = config["exp_vars"]
     dist_vars = config.get("dist_vars", [])
-    synonym_sets = config["synonym_sets"]
     questions = config["questions"]
 
     # Pre-seed from stored injected_vars — both caches use the same dict because
@@ -130,8 +123,6 @@ async def _run_pooled_interview(
     for q in questions:
         q_text = resolve_variables(q.question_text, exp_vars, resolved_cache)
         q_text = resolve_dist_variables(q_text, dist_vars, dist_cache)
-        if exp.synonym_injection_enabled:
-            q_text = apply_synonym_injection(q_text, synonym_sets)
         q_dicts.append({
             "sort_order": q.sort_order,
             "text": q_text,
@@ -172,7 +163,6 @@ async def _run_dedicated_interview(
     exp = config["experiment"]
     exp_vars = config["exp_vars"]
     dist_vars = config.get("dist_vars", [])
-    synonym_sets = config["synonym_sets"]
     questions = config["questions"]
 
     resolved_cache: dict[str, str] = dict(injected_vars) if injected_vars else {}
@@ -183,8 +173,6 @@ async def _run_dedicated_interview(
     for q in questions:
         q_text = resolve_variables(q.question_text, exp_vars, resolved_cache)
         q_text = resolve_dist_variables(q_text, dist_vars, dist_cache)
-        if exp.synonym_injection_enabled:
-            q_text = apply_synonym_injection(q_text, synonym_sets)
         q_dicts.append({
             "sort_order": q.sort_order,
             "text": q_text,

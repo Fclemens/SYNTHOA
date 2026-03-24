@@ -16,7 +16,7 @@ from ..config import settings  # noqa: used by preflight + preview
 from ..database import get_db
 from ..models.audience import Persona
 from ..models.experiment import (
-    Experiment, ExperimentVariable, ExperimentDistVariable, OutputSchema, Question, SynonymSet,
+    Experiment, ExperimentVariable, ExperimentDistVariable, OutputSchema, Question,
 )
 from ..schemas.experiment import (
     ExperimentCreate, ExperimentOut, ExperimentUpdate,
@@ -27,13 +27,12 @@ from ..schemas.experiment import (
     PreflightReport, PreflightRequest,
     PreviewInterviewRequest, PreviewInterviewResult,
     QuestionCreate, QuestionOut, QuestionReorder, QuestionUpdate,
-    SynonymSetCreate, SynonymSetOut,
 )
 from ..services.backstory import generate_backstory
 from ..services.extraction import extract_with_confidence
 from ..services.preflight import run_preflight
 from ..services.prompt_assembly import build_dedicated_messages, estimate_message_tokens
-from ..services.variable_resolution import apply_synonym_injection, resolve_dist_variables, resolve_variables
+from ..services.variable_resolution import resolve_dist_variables, resolve_variables
 from ..services.llm_client import call_llm_messages, get_price
 
 router = APIRouter(prefix="/api/experiments", tags=["experiments"])
@@ -41,7 +40,6 @@ router = APIRouter(prefix="/api/experiments", tags=["experiments"])
 EXP_LOAD = [
     selectinload(Experiment.variables),
     selectinload(Experiment.dist_variables),
-    selectinload(Experiment.synonym_sets),
     selectinload(Experiment.questions),
     selectinload(Experiment.output_schemas),
 ]
@@ -88,7 +86,6 @@ async def export_experiment_protocol(
             "name": exp.name,
             "global_context": exp.global_context,
             "execution_mode": exp.execution_mode,
-            "synonym_injection_enabled": exp.synonym_injection_enabled,
         },
         "variables": [
             {"placeholder": v.placeholder, "attributes": v.attributes}
@@ -102,10 +99,6 @@ async def export_experiment_protocol(
                 "sort_order": v.sort_order,
             }
             for v in exp.dist_variables
-        ],
-        "synonym_sets": [
-            {"canonical": ss.canonical, "synonyms": ss.synonyms}
-            for ss in exp.synonym_sets
         ],
         "questions": [
             {
@@ -158,7 +151,6 @@ async def import_experiment_protocol(
         name=meta.name,
         global_context=meta.global_context,
         execution_mode=meta.execution_mode,
-        synonym_injection_enabled=meta.synonym_injection_enabled,
     )
     db.add(exp)
 
@@ -178,14 +170,6 @@ async def import_experiment_protocol(
             var_type=v.var_type,
             distribution=v.distribution,
             sort_order=v.sort_order,
-        ))
-
-    for ss in b.synonym_sets:
-        db.add(SynonymSet(
-            id=str(uuid.uuid4()),
-            experiment_id=exp.id,
-            canonical=ss.canonical,
-            synonyms=ss.synonyms,
         ))
 
     for q in b.questions:
@@ -217,7 +201,6 @@ async def import_experiment_protocol(
         name=exp.name,
         variables_imported=len(b.variables),
         dist_variables_imported=len(b.dist_variables),
-        synonym_sets_imported=len(b.synonym_sets),
         questions_imported=len(b.questions),
         output_schema_imported=bool(b.output_schema),
     )
@@ -355,36 +338,6 @@ async def delete_dist_variable(experiment_id: str, var_id: str, db: AsyncSession
     if not var or var.experiment_id != experiment_id:
         raise HTTPException(status_code=404, detail="Variable not found")
     await db.delete(var)
-    await db.commit()
-
-
-# ── Synonym Sets ──────────────────────────────────────────────────────────────
-
-@router.post("/{experiment_id}/synonym-sets", response_model=SynonymSetOut, status_code=201)
-async def add_synonym_set(
-    experiment_id: str, body: SynonymSetCreate, db: AsyncSession = Depends(get_db)
-):
-    exp = await db.get(Experiment, experiment_id)
-    if not exp:
-        raise HTTPException(status_code=404, detail="Experiment not found")
-    ss = SynonymSet(
-        id=str(uuid.uuid4()),
-        experiment_id=experiment_id,
-        canonical=body.canonical,
-        synonyms=body.synonyms,
-    )
-    db.add(ss)
-    await db.commit()
-    await db.refresh(ss)
-    return ss
-
-
-@router.delete("/{experiment_id}/synonym-sets/{ss_id}", status_code=204)
-async def delete_synonym_set(experiment_id: str, ss_id: str, db: AsyncSession = Depends(get_db)):
-    ss = await db.get(SynonymSet, ss_id)
-    if not ss or ss.experiment_id != experiment_id:
-        raise HTTPException(status_code=404, detail="Synonym set not found")
-    await db.delete(ss)
     await db.commit()
 
 
@@ -593,11 +546,6 @@ async def preview_interview(
     )
     dist_vars = dist_vars_result.scalars().all()
 
-    syn_result = await db.execute(
-        select(SynonymSet).where(SynonymSet.experiment_id == experiment_id)
-    )
-    synonym_sets = syn_result.scalars().all()
-
     q_result = await db.execute(
         select(Question).where(Question.experiment_id == experiment_id).order_by(Question.sort_order)
     )
@@ -609,8 +557,6 @@ async def preview_interview(
     for q in questions:
         q_text = resolve_variables(q.question_text, exp_vars, resolved_cache)
         q_text = resolve_dist_variables(q_text, dist_vars, dist_cache)
-        if exp.synonym_injection_enabled:
-            q_text = apply_synonym_injection(q_text, synonym_sets)
         q_dicts.append({
             "sort_order": q.sort_order,
             "text": q_text,

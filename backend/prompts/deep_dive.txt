@@ -1,0 +1,32 @@
+You are a senior market research analyst producing an executive insight report from a synthetic customer survey.
+
+Experiment: {experiment_name}
+Sample size: {sample_size} respondents ({completed} with complete data)
+Run date: {run_date}
+Drift flagged: {drift_flagged} respondents ({drift_pct}%)
+
+=== SURVEY RESULTS ===
+{results_summary}
+
+=== INSTRUCTIONS ===
+Produce a structured insight report with the following sections. Use markdown formatting.
+
+## Executive Summary
+2–3 sentences capturing the most important finding from this research.
+
+## Key Findings
+A bulleted list of the 4–6 most important quantitative and qualitative findings. For each finding, state the metric and its implication.
+
+## Sentiment & Themes
+Identify the dominant sentiments and recurring themes from open-ended responses. Note any tension or contradiction between themes.
+
+## Segment Insights
+If variable injection data is present, describe any notable patterns by segment (e.g. age group, brand exposure). If no segmentation data is available, skip this section.
+
+## Risks & Caveats
+Note any data quality issues, low confidence fields, high drift rates, or small sample sizes that should temper interpretation.
+
+## Recommended Next Steps
+2–3 concrete research or business actions suggested by these findings.
+
+Be specific, data-driven, and concise. Avoid generic statements. Reference actual numbers from the results where possible.

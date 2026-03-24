@@ -39,7 +39,6 @@ export default function ExperimentsPage() {
     audience_id: '',
     execution_mode: 'pooled' as 'pooled' | 'dedicated',
     global_context: '',
-    synonym_injection_enabled: true,
   })
 
   async function load() {
@@ -123,11 +122,8 @@ export default function ExperimentsPage() {
         global_context: form.global_context.trim() || undefined,
         execution_mode: form.execution_mode,
       })
-      if (!form.synonym_injection_enabled) {
-        await api.updateExperiment(exp.id, { synonym_injection_enabled: false })
-      }
       setModalOpen(false)
-      setForm({ name: '', description: '', audience_id: '', execution_mode: 'pooled', global_context: '', synonym_injection_enabled: true })
+      setForm({ name: '', description: '', audience_id: '', execution_mode: 'pooled', global_context: '' })
       toast('Experiment created', 'success')
       await load()
     } catch (e: unknown) {
@@ -240,9 +236,6 @@ export default function ExperimentsPage() {
                   )}
                   {exp.variables?.length > 0 && (
                     <Badge color="yellow">{exp.variables.length} var{exp.variables.length !== 1 ? 's' : ''}</Badge>
-                  )}
-                  {exp.synonym_injection_enabled && (
-                    <Badge color="green">synonyms</Badge>
                   )}
                 </div>
                 <p className="mt-3 text-xs text-gray-400">Created {fmtDate(exp.created_at)}</p>
@@ -374,18 +367,6 @@ export default function ExperimentsPage() {
               className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               placeholder="Background context shown to the model at the start of each interview…"
             />
-          </div>
-
-          <div>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={form.synonym_injection_enabled}
-                onChange={e => setForm(f => ({ ...f, synonym_injection_enabled: e.target.checked }))}
-                className="rounded border-gray-300 text-indigo-600"
-              />
-              <span className="font-medium text-gray-700">Enable synonym injection</span>
-            </label>
           </div>
 
           <div className="flex justify-end gap-3 pt-2">

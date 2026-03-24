@@ -137,3 +137,16 @@ def generate_backstory_preview(traits: dict[str, Any], max_chars: int = 200) -> 
         for k, v in list(traits.items())[:5]
     ]
     return ", ".join(parts)[:max_chars]
+
+
+def generate_backstory_template(
+    traits: dict[str, Any],
+    custom_template: str | None = None,
+) -> str:
+    """
+    Build a backstory without any LLM call.
+    Uses the custom template if provided, otherwise uses the built-in default profile format.
+    """
+    if custom_template and custom_template.strip():
+        return _render_custom_template(custom_template, traits)
+    return _build_default_backstory(traits)

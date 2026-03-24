@@ -297,7 +297,7 @@ async def sample_personas(
             status="completed",
             n_requested=0,
             n_completed=0,
-            generate_backstories=body.generate_backstories,
+            backstory_mode=body.backstory_mode,
             validate_plausibility=body.validate_plausibility,
             llm_validation=body.llm_validation,
         )
@@ -312,7 +312,7 @@ async def sample_personas(
         status="running",
         n_requested=n_needed,
         n_completed=0,
-        generate_backstories=body.generate_backstories,
+        backstory_mode=body.backstory_mode,
         validate_plausibility=body.validate_plausibility,
         llm_validation=body.llm_validation,
     )
@@ -346,7 +346,7 @@ async def sample_personas_fresh(
         status="running",
         n_requested=body.n,
         n_completed=0,
-        generate_backstories=body.generate_backstories,
+        backstory_mode=body.backstory_mode,
         validate_plausibility=body.validate_plausibility,
         llm_validation=body.llm_validation,
     )

@@ -56,6 +56,31 @@ class GammaDist(BaseModel):
     max_clip: Optional[float] = None
 
 
+class TruncatedNormalDist(BaseModel):
+    """Normal distribution bounded by hard min/max — ideal for age, income brackets, etc."""
+    type: Literal["truncated_normal"]
+    mean: float
+    std: float
+    min: float
+    max: float
+
+
+class PoissonDist(BaseModel):
+    """Discrete count distribution — ideal for household size, purchases/month, etc."""
+    type: Literal["poisson"]
+    lambda_: float = Field(alias="lambda", gt=0)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class WeibullDist(BaseModel):
+    """Lifetime / time-to-event distribution — ideal for churn, tenure, etc."""
+    type: Literal["weibull"]
+    shape: float = Field(gt=0)   # k  (shape < 1 → infant mortality, > 1 → wear-out)
+    scale: float = Field(gt=0)   # λ  (characteristic lifetime)
+    max_clip: Optional[float] = None
+
+
 class CategoricalOption(BaseModel):
     label: str
     weight: float = 1.0
@@ -66,9 +91,19 @@ class CategoricalDist(BaseModel):
     options: list[CategoricalOption]
 
 
+class OrdinalDist(BaseModel):
+    """Ordered categorical — participates in the Gaussian copula via threshold discretisation.
+    Options must be listed from lowest to highest rank (e.g. ['None', 'High School', 'Bachelor']).
+    Sampling is uniform across ranks; correlations work identically to continuous variables."""
+    type: Literal["ordinal"]
+    options: list[str]
+
+
 DistributionConfig = Union[
     NormalDist, LogNormalDist, UniformDist, TriangularDist,
-    BetaDist, ExponentialDist, GammaDist, CategoricalDist
+    BetaDist, ExponentialDist, GammaDist,
+    TruncatedNormalDist, PoissonDist, WeibullDist,
+    CategoricalDist, OrdinalDist,
 ]
 
 
@@ -76,14 +111,14 @@ DistributionConfig = Union[
 
 class AudienceVariableCreate(BaseModel):
     name: str
-    var_type: Literal["continuous", "categorical"]
+    var_type: Literal["continuous", "categorical", "ordinal"]
     distribution: dict[str, Any]
     sort_order: int = 0
 
 
 class AudienceVariableUpdate(BaseModel):
     name: Optional[str] = None
-    var_type: Optional[Literal["continuous", "categorical"]] = None
+    var_type: Optional[Literal["continuous", "categorical", "ordinal"]] = None
     distribution: Optional[dict[str, Any]] = None
     sort_order: Optional[int] = None
 
@@ -172,7 +207,7 @@ class SampleRequest(BaseModel):
     validate_plausibility: bool = True
     llm_validation: bool = False
     reuse_existing: bool = False
-    generate_backstories: bool = True
+    backstory_mode: Literal["none", "template", "llm"] = "llm"
 
 
 class SamplingJobOut(BaseModel):
@@ -182,7 +217,7 @@ class SamplingJobOut(BaseModel):
     status: str
     n_requested: int
     n_completed: int
-    generate_backstories: bool
+    backstory_mode: str
     validate_plausibility: bool
     llm_validation: bool
     created_at: datetime

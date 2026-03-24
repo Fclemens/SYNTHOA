@@ -305,7 +305,6 @@ function OverviewTab({ experiment, onSaved }: { experiment: Experiment; onSaved:
     name: experiment.name,
     global_context: experiment.global_context ?? '',
     execution_mode: experiment.execution_mode,
-    synonym_injection_enabled: experiment.synonym_injection_enabled,
     drift_detection_enabled: experiment.drift_detection_enabled ?? true,
   })
 
@@ -400,25 +399,6 @@ function OverviewTab({ experiment, onSaved }: { experiment: Experiment; onSaved:
                   : 'One LLM call per question, multi-turn interview'}
               </span>
             </div>
-          )}
-        </div>
-
-        <div>
-          <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Synonym Injection</label>
-          {editing ? (
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={form.synonym_injection_enabled}
-                onChange={e => setForm(f => ({ ...f, synonym_injection_enabled: e.target.checked }))}
-                className="rounded border-gray-300 text-indigo-600"
-              />
-              Enabled
-            </label>
-          ) : (
-            <Badge color={experiment.synonym_injection_enabled ? 'green' : 'gray'}>
-              {experiment.synonym_injection_enabled ? 'Enabled' : 'Disabled'}
-            </Badge>
           )}
         </div>
 

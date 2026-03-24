@@ -104,17 +104,3 @@ def resolve_dist_variables(
     return text
 
 
-def apply_synonym_injection(
-    text: str,
-    synonym_sets: list[Any],  # list of SynonymSet ORM objects
-) -> str:
-    """
-    For each canonical term found in the text, randomly replace with
-    one of its synonyms (including the canonical itself).
-    """
-    for ss in synonym_sets:
-        if ss.canonical in text:
-            options = [ss.canonical] + list(ss.synonyms)
-            chosen = random.choice(options)
-            text = text.replace(ss.canonical, chosen)
-    return text

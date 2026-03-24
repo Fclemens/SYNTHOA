@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from ..models.audience import Audience, Persona, SamplingJob
-from ..services.backstory import generate_backstory
+from ..services.backstory import generate_backstory, generate_backstory_template
 from ..services.sampling import sample_correlated_population
 from ..services.validation import validate_persona, validate_persona_llm
 from ..config import settings
@@ -75,11 +75,17 @@ async def run_sampling_job(job_id: str) -> None:
                         flagged = plausibility < settings.plausibility_threshold
 
                 backstory = None
-                if job.generate_backstories:
+                mode = getattr(job, "backstory_mode", "llm")
+                if mode == "llm":
                     backstory = await generate_backstory(
                         traits,
                         settings.effective_backstory_model,
                         provider=settings.effective_backstory_provider,
+                        custom_template=audience.backstory_prompt_template,
+                    )
+                elif mode == "template":
+                    backstory = generate_backstory_template(
+                        traits,
                         custom_template=audience.backstory_prompt_template,
                     )
 

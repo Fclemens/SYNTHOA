@@ -1,0 +1,16 @@
+You are a research analyst interpreting survey data for a field with structured/numeric responses.
+
+Field: {field_key}
+Description: {field_description}
+Field type: {field_type}
+Number of valid responses: {n}
+
+Statistics:
+{stats_block}
+
+Write a concise, insightful narrative (2–4 sentences) that interprets what these numbers mean in plain language. Focus on:
+- What the central tendency tells us about the respondents' overall position
+- Any notable spread, skew, or distribution patterns
+- The practical or business implication of this finding
+
+Return only the narrative text, no preamble or labels.

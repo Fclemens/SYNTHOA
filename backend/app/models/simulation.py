@@ -26,6 +26,7 @@ class SimulationRun(Base):
     locked_config: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    analysis_cache: Mapped[dict | None] = mapped_column(JSON)
 
     experiment: Mapped["Experiment"] = relationship(back_populates="runs")  # type: ignore[name-defined]
     tasks: Mapped[list["SimulationTask"]] = relationship(

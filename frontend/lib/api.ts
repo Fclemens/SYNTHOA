@@ -39,11 +39,9 @@ export interface ExperimentProtocolBundle {
     name: string
     global_context: string
     execution_mode: 'pooled' | 'dedicated'
-    synonym_injection_enabled: boolean
   }
   variables: { placeholder: string; attributes: { value: string; weight: number }[] }[]
   dist_variables: { name: string; var_type: string; distribution: Record<string, unknown>; sort_order: number }[]
-  synonym_sets: { canonical: string; synonyms: string[] }[]
   questions: {
     sort_order: number
     question_type: 'scale' | 'multiple_choice' | 'open_ended'
@@ -62,7 +60,6 @@ export interface ExperimentImportResult {
   name: string
   variables_imported: number
   dist_variables_imported: number
-  synonym_sets_imported: number
   questions_imported: number
   output_schema_imported: boolean
 }
@@ -77,7 +74,7 @@ export interface AudienceImportResult {
 
 export interface AudienceVariable {
   id: string; audience_id: string; name: string;
-  var_type: "continuous" | "categorical"; distribution: DistributionConfig; sort_order: number;
+  var_type: "continuous" | "categorical" | "ordinal"; distribution: DistributionConfig; sort_order: number;
 }
 export interface Audience {
   id: string; name: string; description?: string;
@@ -91,7 +88,7 @@ export interface Persona {
 export interface SamplingJob {
   id: string; audience_id: string; status: string;
   n_requested: number; n_completed: number;
-  generate_backstories: boolean; validate_plausibility: boolean; llm_validation: boolean;
+  backstory_mode: string; validate_plausibility: boolean; llm_validation: boolean;
   created_at: string; completed_at?: string; error?: string;
 }
 export interface ExperimentDistVariable {
@@ -100,18 +97,16 @@ export interface ExperimentDistVariable {
 }
 export interface Experiment {
   id: string; audience_id: string; name: string; global_context: string;
-  execution_mode: "pooled" | "dedicated"; synonym_injection_enabled: boolean;
+  execution_mode: "pooled" | "dedicated";
   drift_detection_enabled: boolean;
   created_at: string;
   variables: ExperimentVariable[]; dist_variables: ExperimentDistVariable[];
-  synonym_sets: SynonymSet[];
   questions: Question[]; output_schemas: OutputSchema[];
 }
 export interface ExperimentVariable {
   id: string; experiment_id: string; placeholder: string;
   attributes: { value: string; weight: number }[];
 }
-export interface SynonymSet { id: string; experiment_id: string; canonical: string; synonyms: string[]; }
 export interface Question {
   id: string; experiment_id: string; sort_order: number;
   question_type: "scale" | "multiple_choice" | "open_ended";
@@ -166,6 +161,44 @@ export interface CalibrationStatus {
   experiment_id: string; level: "uncalibrated" | "directional" | "calibrated";
   last_calibrated?: string; notes?: string;
   benchmarks: { id: string; question_id: string; js_divergence: number; sample_size_real: number; sample_size_synthetic: number; created_at: string }[];
+}
+
+// ── Analysis types ────────────────────────────────────────────────────────────
+
+export interface FieldSummaryScale {
+  key: string; type: string; description: string; n: number; missing: number;
+  mean: number | null; median: number; std: number; min: number; max: number;
+  histogram: { label: string; count: number }[];
+}
+export interface FieldSummaryChoice {
+  key: string; type: string; description: string; n: number; missing: number;
+  distribution: Record<string, { count: number; pct: number }>;
+}
+export interface FieldSummaryBoolean {
+  key: string; type: string; description: string; n: number; missing: number;
+  true_count: number; false_count: number; true_pct: number;
+}
+export interface FieldSummaryText {
+  key: string; type: string; description: string; n: number; missing: number;
+  answers: string[];
+  llm_summary: string | null;
+}
+export type FieldSummary = FieldSummaryScale | FieldSummaryChoice | FieldSummaryBoolean | FieldSummaryText;
+
+export interface RunAnalysisSummary {
+  run_id: string; experiment_id: string;
+  total_tasks: number; completed_tasks: number; drift_flagged_count: number;
+  confidence_threshold: number;
+  fields: Record<string, FieldSummary>;
+}
+export interface FieldSummarizeResult { key: string; llm_summary: string; }
+export interface DeepDiveResult {
+  analysis: string;
+  model: string;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+  generated_at: string;
 }
 
 export interface ModelPricing { input: number; output: number }
@@ -224,9 +257,9 @@ export const api = {
   deleteConditionalRule: (audienceId: string, ruleId: string) =>
     req<void>("DELETE", `/api/audiences/${audienceId}/conditional-rules/${ruleId}`),
 
-  samplePersonas: (audienceId: string, body: { n: number; validate_plausibility?: boolean; llm_validation?: boolean; reuse_existing?: boolean; generate_backstories?: boolean }) =>
+  samplePersonas: (audienceId: string, body: { n: number; validate_plausibility?: boolean; llm_validation?: boolean; reuse_existing?: boolean; backstory_mode?: 'none' | 'template' | 'llm' }) =>
     req<SamplingJob>("POST", `/api/audiences/${audienceId}/sample`, body),
-  samplePersonasFresh: (audienceId: string, body: { n: number; validate_plausibility?: boolean; llm_validation?: boolean; generate_backstories?: boolean }) =>
+  samplePersonasFresh: (audienceId: string, body: { n: number; validate_plausibility?: boolean; llm_validation?: boolean; backstory_mode?: 'none' | 'template' | 'llm' }) =>
     req<SamplingJob>("POST", `/api/audiences/${audienceId}/sample/fresh`, body),
   listSamplingJobs: (audienceId: string) =>
     req<SamplingJob[]>("GET", `/api/audiences/${audienceId}/sampling-jobs`),
@@ -278,11 +311,6 @@ export const api = {
   deleteExpDistVariable: (expId: string, varId: string) =>
     req<void>("DELETE", `/api/experiments/${expId}/dist-variables/${varId}`),
 
-  addSynonymSet: (expId: string, body: { canonical: string; synonyms: string[] }) =>
-    req<SynonymSet>("POST", `/api/experiments/${expId}/synonym-sets`, body),
-  deleteSynonymSet: (expId: string, ssId: string) =>
-    req<void>("DELETE", `/api/experiments/${expId}/synonym-sets/${ssId}`),
-
   addQuestion: (expId: string, body: Omit<Question, "id" | "experiment_id">) =>
     req<Question>("POST", `/api/experiments/${expId}/questions`, body),
   updateQuestion: (expId: string, qId: string, body: Partial<Question>) =>
@@ -328,6 +356,17 @@ export const api = {
     if (experimentId) params.set('experiment_id', experimentId)
     return req<{ deleted: number }>("DELETE", `/api/runs?${params}`)
   },
+
+  // Analysis
+  getRunSummary: (runId: string, confidenceThreshold = 0) =>
+    req<RunAnalysisSummary>("GET", `/api/runs/${runId}/analysis/summary?confidence_threshold=${confidenceThreshold}`),
+  summarizeField: (runId: string, fieldKey: string, confidenceThreshold = 0) =>
+    req<FieldSummarizeResult>("POST", `/api/runs/${runId}/analysis/summarize-field`, { field_key: fieldKey, confidence_threshold: confidenceThreshold }),
+  generateDeepDive: (runId: string, confidenceThreshold = 0) =>
+    req<DeepDiveResult>("POST", `/api/runs/${runId}/analysis/deep-dive`, { confidence_threshold: confidenceThreshold }),
+  getPrompt: (name: string) => req<{ name: string; content: string }>("GET", `/api/analysis/prompts/${name}`),
+  updatePrompt: (name: string, content: string) => req<{ name: string; content: string }>("PUT", `/api/analysis/prompts/${name}`, { content }),
+  exportAnalysisPdf: (runId: string): string => `${BASE}/api/runs/${runId}/analysis/export-pdf`,
 
   // Settings
   getSettings: () => req<AppSettings>('GET', '/api/settings'),

@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 from scipy.stats import beta as beta_dist
-from scipy.stats import expon, gamma, lognorm, norm, triang, uniform
+from scipy.stats import expon, gamma, lognorm, norm, poisson as poisson_dist, triang, truncnorm, uniform, weibull_min
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -66,6 +66,34 @@ def inverse_cdf(dist: dict[str, Any], u: float) -> float:
         return float(expon.ppf(u, scale=1.0 / lam))
     elif t == "gamma":
         return float(gamma.ppf(u, a=dist["alpha"], scale=dist["beta"]))
+    elif t == "truncated_normal":
+        mean, std = dist["mean"], dist["std"]
+        lo, hi = dist["min"], dist["max"]
+        a, b = (lo - mean) / std, (hi - mean) / std
+        return float(truncnorm.ppf(u, a=a, b=b, loc=mean, scale=std))
+    elif t == "poisson":
+        lam = dist.get("lambda", dist.get("lambda_", 1.0))
+        # poisson.ppf returns a float; cast to int then back to float for trait consistency
+        return float(int(poisson_dist.ppf(u, mu=lam)))
+    elif t == "weibull":
+        return float(weibull_min.ppf(u, c=dist["shape"], scale=dist["scale"]))
+    elif t == "ordinal":
+        # Map uniform u to integer category index (uniform spacing across N bins)
+        options = dist.get("options", [])
+        n_opts = len(options)
+        if n_opts == 0:
+            return 0.0
+        idx = min(int(u * n_opts), n_opts - 1)
+        return float(idx)
+    elif t == "categorical":
+        # Binary categorical (exactly 2 options) — encode as 0/1 weighted by option weights
+        options = dist.get("options", [])
+        if len(options) < 2:
+            return 0.0
+        weights = [o.get("weight", 1.0) for o in options]
+        total = sum(weights) or 1.0
+        threshold = weights[0] / total
+        return 0.0 if u < threshold else 1.0
     else:
         raise ValueError(f"Unknown distribution type: {t}")
 
@@ -87,6 +115,25 @@ def sample_categorical(dist: dict[str, Any]) -> str:
     total = sum(weights)
     weights = [w / total for w in weights]
     return random.choices(labels, weights=weights, k=1)[0]
+
+
+# ── Quintile label normalisation ───────────────────────────────────────────────
+
+QUINTILE_LABELS = ["Very Low", "Low", "Medium", "High", "Very High"]
+
+def quintile_label(value: float, dist: dict[str, Any]) -> str:
+    """Map a sampled numeric value to a quintile label using theoretical distribution quantiles."""
+    thresholds = []
+    for p in (0.2, 0.4, 0.6, 0.8):
+        u = max(1e-6, min(1 - 1e-6, p))
+        try:
+            thresholds.append(inverse_cdf(dist, u))
+        except Exception:
+            thresholds.append(value)  # fallback: all values end up in same bin
+    for i, threshold in enumerate(thresholds):
+        if value < threshold:
+            return QUINTILE_LABELS[i]
+    return QUINTILE_LABELS[4]
 
 
 def evaluate_condition(expr: dict[str, Any], traits: dict[str, Any]) -> bool:
@@ -130,7 +177,13 @@ async def sample_correlated_population(
     all_vars = result.scalars().all()
 
     cont_vars = [v for v in all_vars if v.var_type == "continuous"]
-    cat_vars = [v for v in all_vars if v.var_type == "categorical"]
+    ordinal_vars = [v for v in all_vars if v.var_type == "ordinal"]
+    all_cat_vars = [v for v in all_vars if v.var_type == "categorical"]
+    # Binary categoricals (exactly 2 options) join the Gaussian copula; others are sampled independently
+    binary_cat_vars = [v for v in all_cat_vars if len(v.distribution.get("options", [])) == 2]
+    cat_vars = [v for v in all_cat_vars if len(v.distribution.get("options", [])) != 2]
+    # All variables that participate in the Cholesky copula
+    copula_vars = cont_vars + ordinal_vars + binary_cat_vars
 
     # Load correlations
     from ..models.audience import VariableCorrelation
@@ -147,8 +200,8 @@ async def sample_correlated_population(
     )
     rules = rule_result.scalars().all()
 
-    k = len(cont_vars)
-    var_index = {v.id: i for i, v in enumerate(cont_vars)}
+    k = len(copula_vars)
+    var_index = {v.id: i for i, v in enumerate(copula_vars)}
 
     personas: list[dict[str, Any]] = []
 
@@ -172,12 +225,29 @@ async def sample_correlated_population(
 
         for row in correlated_Z:
             traits: dict[str, Any] = {}
-            for idx, var in enumerate(cont_vars):
+            for idx, var in enumerate(copula_vars):
                 u = float(norm.cdf(row[idx]))
                 u = max(1e-6, min(1 - 1e-6, u))  # avoid ppf at 0/1
                 value = inverse_cdf(var.distribution, u)
-                value = clip_to_bounds(value, var.distribution)
-                traits[var.name] = round(value, 2)
+
+                if var.var_type == "ordinal":
+                    # Decode float index → label
+                    opts = var.distribution.get("options", [])
+                    i = max(0, min(int(value), len(opts) - 1))
+                    traits[var.name] = opts[i] if opts else ""
+                elif var.var_type == "categorical":
+                    # Binary categorical: decode 0/1 → label
+                    opts = var.distribution.get("options", [])
+                    choice = int(round(value))
+                    choice = max(0, min(choice, len(opts) - 1))
+                    traits[var.name] = opts[choice]["label"] if opts else ""
+                else:
+                    # Continuous
+                    value = clip_to_bounds(value, var.distribution)
+                    if var.distribution.get("normalize_labels"):
+                        traits[var.name] = quintile_label(value, var.distribution)
+                    else:
+                        traits[var.name] = round(value, 2)
 
             # Categorical variables with conditional rules
             for cat_var in cat_vars:

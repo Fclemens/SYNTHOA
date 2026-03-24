@@ -55,21 +55,6 @@ class ExperimentVariableOut(BaseModel):
     attributes: list[dict[str, Any]]
 
 
-# ── SynonymSet ────────────────────────────────────────────────────────────────
-
-class SynonymSetCreate(BaseModel):
-    canonical: str
-    synonyms: list[str]
-
-
-class SynonymSetOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    id: str
-    experiment_id: str
-    canonical: str
-    synonyms: list[str]
-
-
 # ── Question ──────────────────────────────────────────────────────────────────
 
 class QuestionCreate(BaseModel):
@@ -141,7 +126,6 @@ class ExperimentCreate(BaseModel):
     name: str
     global_context: str = ""
     execution_mode: Literal["pooled", "dedicated"] = "pooled"
-    synonym_injection_enabled: bool = False
     drift_detection_enabled: bool = True
 
 
@@ -150,7 +134,6 @@ class ExperimentUpdate(BaseModel):
     name: Optional[str] = None
     global_context: Optional[str] = None
     execution_mode: Optional[Literal["pooled", "dedicated"]] = None
-    synonym_injection_enabled: Optional[bool] = None
     drift_detection_enabled: Optional[bool] = None
 
 
@@ -161,12 +144,10 @@ class ExperimentOut(BaseModel):
     name: str
     global_context: str
     execution_mode: str
-    synonym_injection_enabled: bool
     drift_detection_enabled: bool
     created_at: datetime
     variables: list[ExperimentVariableOut] = []
     dist_variables: list[ExperimentDistVariableOut] = []
-    synonym_sets: list[SynonymSetOut] = []
     questions: list[QuestionOut] = []
     output_schemas: list[OutputSchemaOut] = []
 
@@ -239,11 +220,6 @@ class ExperimentProtocolDistVariable(BaseModel):
     sort_order: int = 0
 
 
-class ExperimentProtocolSynonymSet(BaseModel):
-    canonical: str
-    synonyms: list[str]
-
-
 class ExperimentProtocolQuestion(BaseModel):
     sort_order: int
     question_type: str
@@ -259,7 +235,6 @@ class ExperimentProtocolMeta(BaseModel):
     name: str
     global_context: str = ""
     execution_mode: str = "pooled"
-    synonym_injection_enabled: bool = False
 
 
 class ExperimentProtocolBundle(BaseModel):
@@ -269,7 +244,6 @@ class ExperimentProtocolBundle(BaseModel):
     experiment: ExperimentProtocolMeta
     variables: list[ExperimentProtocolVariable] = []
     dist_variables: list[ExperimentProtocolDistVariable] = []
-    synonym_sets: list[ExperimentProtocolSynonymSet] = []
     questions: list[ExperimentProtocolQuestion] = []
     output_schema: list[dict[str, Any]] = []   # [{key, type, description?}]
 
@@ -284,7 +258,6 @@ class ExperimentImportResult(BaseModel):
     name: str
     variables_imported: int
     dist_variables_imported: int
-    synonym_sets_imported: int
     questions_imported: int
     output_schema_imported: bool
 

@@ -121,7 +121,6 @@ experiment = req("POST", "/api/experiments", {
         "The product is a project management SaaS tool for teams."
     ),
     "execution_mode": "pooled",
-    "synonym_injection_enabled": False
 })
 print(f"  Experiment ID: {experiment['id']}")
 eid = experiment["id"]

@@ -1,0 +1,15 @@
+You are a research analyst summarizing open-ended survey responses.
+
+Field: {field_key}
+Description: {field_description}
+Number of responses: {n}
+
+Responses:
+{answers}
+
+Write a concise, neutral summary (3–5 sentences) of the key themes, patterns, and notable viewpoints in these responses. Focus on:
+- The most common themes and sentiments
+- Any notable patterns or recurring ideas
+- Significant outliers or contrasting perspectives if present
+
+Return only the summary text, no preamble or labels.

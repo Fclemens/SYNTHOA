@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import settings
 from ..database import get_db
 from ..models.audience import Persona
-from ..models.experiment import Experiment, ExperimentDistVariable, ExperimentVariable, OutputSchema, Question, SynonymSet
+from ..models.experiment import Experiment, ExperimentDistVariable, ExperimentVariable, OutputSchema, Question
 from ..models.simulation import SimulationRun, SimulationTask
 from ..schemas.simulation import (
     LaunchRequest, ReExtractRequest,
@@ -21,7 +21,7 @@ from ..schemas.simulation import (
 from ..services.execution import launch_run, re_extract_run, retry_failed_tasks
 from ..services.sampling import sample_correlated_population
 from ..services.backstory import generate_backstory
-from ..services.variable_resolution import resolve_variables, resolve_dist_variables, apply_synonym_injection
+from ..services.variable_resolution import resolve_variables, resolve_dist_variables
 from ..services.validation import validate_persona
 
 router = APIRouter(prefix="/api", tags=["runs"])
@@ -128,11 +128,6 @@ async def launch_simulation(
     )
     questions_for_vars = q_result.scalars().all()
 
-    syn_result = await db.execute(
-        select(SynonymSet).where(SynonymSet.experiment_id == experiment_id)
-    )
-    synonym_sets = syn_result.scalars().all()
-
     # Load output schema for locked_config
     schema_result = await db.execute(
         select(OutputSchema)
@@ -149,7 +144,6 @@ async def launch_simulation(
         "execution_mode": exp.execution_mode,
         "dual_extraction": body.dual_extraction,
         "output_schema": output_schema,
-        "synonym_injection_enabled": exp.synonym_injection_enabled,
         "drift_detection_enabled": exp.drift_detection_enabled,
         "est_tokens_per_task": 2000,
     }

@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
-from ..models.experiment import Experiment, ExperimentDistVariable, ExperimentVariable, OutputSchema, Question, SynonymSet
+from ..models.experiment import Experiment, ExperimentDistVariable, ExperimentVariable, OutputSchema, Question
 from ..models.audience import Audience
 from ..schemas.experiment import (
     CostEstimate, PersonaPayload, PlausibilitySummary, PreflightReport,
@@ -22,7 +22,7 @@ from .backstory import generate_backstory_preview
 from .prompt_assembly import build_pooled_prompt, estimate_message_tokens
 from .sampling import sample_correlated_population
 from .validation import validate_persona
-from .variable_resolution import apply_synonym_injection, resolve_dist_variables, resolve_variables
+from .variable_resolution import resolve_dist_variables, resolve_variables
 
 logger = logging.getLogger(__name__)
 
@@ -83,11 +83,6 @@ async def run_preflight(
     )
     dist_vars = dist_vars_result.scalars().all()
 
-    syn_result = await db.execute(
-        select(SynonymSet).where(SynonymSet.experiment_id == experiment_id)
-    )
-    synonym_sets = syn_result.scalars().all()
-
     q_result = await db.execute(
         select(Question).where(Question.experiment_id == experiment_id).order_by(Question.sort_order)
     )
@@ -125,8 +120,6 @@ async def run_preflight(
         for q in questions:
             q_text = resolve_variables(q.question_text, exp_vars, resolved_cache)
             q_text = resolve_dist_variables(q_text, dist_vars, dist_cache)
-            if exp.synonym_injection_enabled:
-                q_text = apply_synonym_injection(q_text, synonym_sets)
             resolved_qs.append(ResolvedQuestion(text=q_text, type=q.question_type, ask_why=q.ask_why))
 
         for var_name, var_value in resolved_cache.items():
