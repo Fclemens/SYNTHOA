@@ -1,27 +1,25 @@
 """
 Module 3: Pre-Flight Validation & Economics
-Generates sample payloads WITHOUT executing LLM calls (except optional backstory preview).
+Generates sample payloads WITHOUT executing LLM calls.
+Uses the existing audience persona panel — does NOT resample.
 """
 from __future__ import annotations
 import logging
+import random
 from collections import Counter, defaultdict
 from typing import Any
 
-import numpy as np
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..models.experiment import Experiment, ExperimentDistVariable, ExperimentVariable, OutputSchema, Question
-from ..models.audience import Audience
+from ..models.audience import Audience, Persona
 from ..schemas.experiment import (
-    CostEstimate, PersonaPayload, PlausibilitySummary, PreflightReport,
+    CostEstimate, PersonaPayload, PreflightReport,
     ResolvedQuestion, TokenEstimate,
 )
-from .backstory import generate_backstory_preview
-from .prompt_assembly import build_pooled_prompt, estimate_message_tokens
-from .sampling import sample_correlated_population
-from .validation import validate_persona
+from .prompt_assembly import build_pooled_prompt, build_dedicated_messages, estimate_message_tokens
 from .variable_resolution import resolve_dist_variables, resolve_variables
 
 logger = logging.getLogger(__name__)
@@ -88,30 +86,37 @@ async def run_preflight(
     )
     questions = q_result.scalars().all()
 
-    # Sample personas (no DB writes)
-    try:
-        raw_personas = await sample_correlated_population(exp.audience_id, sample_size, db)
-    except Exception as e:
+    # Load existing persona panel — preflight uses the already-sampled audience, no re-sampling
+    personas_result = await db.execute(
+        select(Persona).where(Persona.audience_id == exp.audience_id)
+    )
+    all_personas = personas_result.scalars().all()
+
+    if not all_personas:
         raise ValueError(
-            f"Sampling failed: {e}. "
-            "Make sure the audience has at least one variable defined."
+            "No personas found in this audience. "
+            "Run the audience sampling job first before running preflight."
         )
 
-    if not raw_personas:
+    if sample_size > len(all_personas):
         raise ValueError(
-            "No personas could be sampled. "
-            "Add at least one variable to the audience before running preflight."
+            f"Population size ({sample_size}) exceeds the audience panel size ({len(all_personas)}). "
+            f"Reduce population size or sample more personas in the audience first."
         )
 
-    # Validate plausibility
-    for p in raw_personas:
-        p["_plausibility"], p["_flags"] = validate_persona(p)
+    selected_personas = random.sample(list(all_personas), sample_size)
+    # Build raw trait dicts (no plausibility re-check — personas were already validated at sampling time)
+    raw_personas = [{"_persona_id": p.id, **p.traits_json} for p in selected_personas]
 
     # Resolve variables + build payloads
     payloads: list[PersonaPayload] = []
     variable_distribution_tracker: dict[str, Counter] = defaultdict(Counter)
 
+    # Build a lookup for stored backstories
+    backstory_by_id = {p.id: p.backstory for p in selected_personas}
+
     for persona_traits in raw_personas:
+        persona_id = persona_traits.get("_persona_id")
         resolved_cache: dict[str, str] = {}
         dist_cache: dict[str, str] = {}
         ctx = resolve_variables(exp.global_context, exp_vars, resolved_cache)
@@ -127,13 +132,13 @@ async def run_preflight(
         for var_name, var_value in dist_cache.items():
             variable_distribution_tracker[var_name][var_value] += 1
 
+        stored_backstory = backstory_by_id.get(persona_id) or ""
+
         payloads.append(PersonaPayload(
             persona_traits={k: v for k, v in persona_traits.items() if not k.startswith("_")},
-            backstory_preview=generate_backstory_preview(persona_traits),
+            backstory_preview=stored_backstory,
             resolved_variables=resolved_cache,
             questions=resolved_qs,
-            plausibility=persona_traits.get("_plausibility", 1.0),
-            flags=persona_traits.get("_flags", []),
         ))
 
     # Token estimation — use one sample payload
@@ -150,14 +155,25 @@ async def run_preflight(
             }
             for i, rq in enumerate(payloads[0].questions)
         ]
-        sample_msgs, _ = build_pooled_prompt(
-            backstory="[backstory placeholder]",
-            global_context=exp.global_context,
-            questions=sample_q_dicts,
-            model=model_pass1,
-        )
-        pass1_in = estimate_message_tokens(sample_msgs, model_pass1)
-        pass1_out = max(200, len(payloads[0].questions) * 80)  # rough estimate per answer
+        if exp.execution_mode == "dedicated":
+            # Dedicated: sum input tokens across all turns (context grows each turn)
+            turn_snapshots = build_dedicated_messages(
+                backstory="[backstory placeholder]",
+                global_context=exp.global_context,
+                questions=sample_q_dicts,
+                model=model_pass1,
+            )
+            pass1_in = sum(estimate_message_tokens(snap, model_pass1) for snap in turn_snapshots)
+            pass1_out = max(200, len(payloads[0].questions) * 120)  # dedicated answers tend to be longer
+        else:
+            sample_msgs, _ = build_pooled_prompt(
+                backstory="[backstory placeholder]",
+                global_context=exp.global_context,
+                questions=sample_q_dicts,
+                model=model_pass1,
+            )
+            pass1_in = estimate_message_tokens(sample_msgs, model_pass1)
+            pass1_out = max(200, len(payloads[0].questions) * 80)  # rough estimate per answer
 
         # Pass 2 input = transcript (pass1_out) + schema overhead
         schema_result = await db.execute(
@@ -181,16 +197,8 @@ async def run_preflight(
 
     cost_est = calculate_cost(token_est, model_pass1, model_pass2, dual_extraction, sample_size)
 
-    plausibility_scores = [p.plausibility for p in payloads]
-    threshold = settings.plausibility_threshold
-
     return PreflightReport(
         payloads=payloads,
-        plausibility_summary=PlausibilitySummary(
-            mean_score=float(np.mean(plausibility_scores)) if plausibility_scores else 0.0,
-            flagged_count=sum(1 for s in plausibility_scores if s < threshold),
-            flags=[p.flags for p in payloads if p.flags],
-        ),
         variable_distributions={k: dict(v) for k, v in variable_distribution_tracker.items()},
         token_estimate=token_est,
         cost_estimate=cost_est,

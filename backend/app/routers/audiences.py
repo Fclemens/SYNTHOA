@@ -98,8 +98,6 @@ async def import_audience(body: AudienceExportBundle, db: AsyncSession = Depends
             audience_id=new_audience.id,
             traits_json=p.traits_json,
             backstory=p.backstory,
-            plausibility=p.plausibility,
-            flagged=p.flagged,
         ))
         persona_count += 1
 
@@ -348,8 +346,6 @@ async def sample_personas(
             n_requested=0,
             n_completed=0,
             backstory_mode=body.backstory_mode,
-            validate_plausibility=body.validate_plausibility,
-            llm_validation=body.llm_validation,
         )
         db.add(job)
         await db.commit()
@@ -540,8 +536,6 @@ async def export_audience(
             {
                 "traits_json": p.traits_json,
                 "backstory": p.backstory,
-                "plausibility": p.plausibility,
-                "flagged": p.flagged,
             }
             for p in p_result.scalars().all()
         ]

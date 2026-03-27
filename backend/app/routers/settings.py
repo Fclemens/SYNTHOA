@@ -39,6 +39,11 @@ class AppSettingsOut(BaseModel):
     effective_validation_provider: str
     effective_validation_model: str
 
+    provider_insights: str           # "" → inherit from pass2
+    model_insights: str              # "" → inherit from model_pass2
+    effective_insights_provider: str
+    effective_insights_model: str
+
     # ── Execution ─────────────────────────────────────────────────────────────
     max_concurrent_tasks: int
     tpm_limit: int
@@ -70,6 +75,9 @@ class AppSettingsUpdate(BaseModel):
     provider_validation: Optional[str] = None
     model_validation: Optional[str] = None
 
+    provider_insights: Optional[str] = None
+    model_insights: Optional[str] = None
+
     # Execution
     max_concurrent_tasks: Optional[int] = Field(None, ge=1, le=100)
     tpm_limit: Optional[int] = Field(None, ge=1000)
@@ -100,6 +108,10 @@ async def get_settings():
         model_validation=settings.model_validation,
         effective_validation_provider=settings.effective_validation_provider,
         effective_validation_model=settings.effective_validation_model,
+        provider_insights=settings.provider_insights,
+        model_insights=settings.model_insights,
+        effective_insights_provider=settings.effective_insights_provider,
+        effective_insights_model=settings.effective_insights_model,
         max_concurrent_tasks=settings.max_concurrent_tasks,
         tpm_limit=settings.tpm_limit,
         plausibility_threshold=settings.plausibility_threshold,

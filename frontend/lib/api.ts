@@ -29,7 +29,7 @@ export interface AudienceExportBundle {
   audience: { name: string; description?: string; backstory_prompt_template?: string }
   variables: { name: string; var_type: 'continuous' | 'categorical'; distribution: DistributionConfig; sort_order: number }[]
   correlations: { var_a_name: string; var_b_name: string; correlation: number }[]
-  personas: { traits_json: Record<string, unknown>; backstory?: string; plausibility?: number; flagged: boolean }[]
+  personas: { traits_json: Record<string, unknown>; backstory?: string }[]
 }
 
 export interface ExperimentProtocolBundle {
@@ -44,7 +44,7 @@ export interface ExperimentProtocolBundle {
   dist_variables: { name: string; var_type: string; distribution: Record<string, unknown>; sort_order: number }[]
   questions: {
     sort_order: number
-    question_type: 'scale' | 'multiple_choice' | 'open_ended'
+    question_type: 'scale' | 'single_choice' | 'multiple_choice' | 'open_ended'
     question_text: string
     scale_min?: number
     scale_max?: number
@@ -84,12 +84,12 @@ export interface Audience {
 }
 export interface Persona {
   id: string; audience_id: string; traits_json: Record<string, unknown>;
-  backstory?: string; plausibility?: number; flagged: boolean; created_at: string;
+  backstory?: string; created_at: string;
 }
 export interface SamplingJob {
   id: string; audience_id: string; status: string;
   n_requested: number; n_completed: number;
-  backstory_mode: string; validate_plausibility: boolean; llm_validation: boolean;
+  backstory_mode: string;
   created_at: string; completed_at?: string; error?: string;
 }
 export interface ExperimentDistVariable {
@@ -110,8 +110,9 @@ export interface ExperimentVariable {
 }
 export interface Question {
   id: string; experiment_id: string; sort_order: number;
-  question_type: "scale" | "multiple_choice" | "open_ended";
+  question_type: "scale" | "single_choice" | "multiple_choice" | "open_ended";
   question_text: string; scale_min?: number; scale_max?: number;
+  scale_anchor_low?: string; scale_anchor_high?: string;
   choices?: string[]; ask_why: boolean; prompting_mode?: string;
 }
 export interface OutputSchema { id: string; experiment_id: string; schema_json: SchemaField[]; version: number; created_at: string; }
@@ -140,7 +141,6 @@ export interface SimulationTaskDetail extends SimulationTaskSummary {
 
 export interface PreflightReport {
   payloads: PersonaPayload[];
-  plausibility_summary: { mean_score: number; flagged_count: number; flags: string[][] };
   variable_distributions: Record<string, Record<string, number>>;
   token_estimate: { pass1_input_tokens: number; pass1_output_tokens: number; pass2_input_tokens: number; pass2_output_tokens: number };
   cost_estimate: { pass1_total: number; pass2_total: number; grand_total: number; per_persona: number };
@@ -149,19 +149,12 @@ export interface PreflightReport {
 export interface PersonaPayload {
   persona_traits: Record<string, unknown>; backstory_preview: string;
   resolved_variables: Record<string, string>; questions: { text: string; type: string; ask_why: boolean }[];
-  plausibility: number; flags: string[];
 }
 
 export interface PreviewInterviewResult {
   persona_id: string; assembled_prompt: string; transcript: string;
   extracted_json?: Record<string, unknown>; extraction_confidence?: Record<string, number>;
   pass1_tokens_in: number; pass1_tokens_out: number; pass1_cost_usd: number;
-}
-
-export interface CalibrationStatus {
-  experiment_id: string; level: "uncalibrated" | "directional" | "calibrated";
-  last_calibrated?: string; notes?: string;
-  benchmarks: { id: string; question_id: string; js_divergence: number; sample_size_real: number; sample_size_synthetic: number; created_at: string }[];
 }
 
 // ── Analysis types ────────────────────────────────────────────────────────────
@@ -224,6 +217,11 @@ export interface AppSettings {
   effective_validation_provider: string;
   effective_validation_model: string;
 
+  provider_insights: string;        // "" = inherit from pass2
+  model_insights: string;
+  effective_insights_provider: string;
+  effective_insights_model: string;
+
   max_concurrent_tasks: number;
   tpm_limit: number;
   plausibility_threshold: number;
@@ -261,9 +259,9 @@ export const api = {
   deleteConditionalRule: (audienceId: string, ruleId: string) =>
     req<void>("DELETE", `/api/audiences/${audienceId}/conditional-rules/${ruleId}`),
 
-  samplePersonas: (audienceId: string, body: { n: number; validate_plausibility?: boolean; llm_validation?: boolean; reuse_existing?: boolean; backstory_mode?: 'none' | 'template' | 'llm' }) =>
+  samplePersonas: (audienceId: string, body: { n: number; reuse_existing?: boolean; backstory_mode?: 'none' | 'template' | 'llm' }) =>
     req<SamplingJob>("POST", `/api/audiences/${audienceId}/sample`, body),
-  samplePersonasFresh: (audienceId: string, body: { n: number; validate_plausibility?: boolean; llm_validation?: boolean; backstory_mode?: 'none' | 'template' | 'llm' }) =>
+  samplePersonasFresh: (audienceId: string, body: { n: number; backstory_mode?: 'none' | 'template' | 'llm' }) =>
     req<SamplingJob>("POST", `/api/audiences/${audienceId}/sample/fresh`, body),
   listSamplingJobs: (audienceId: string) =>
     req<SamplingJob[]>("GET", `/api/audiences/${audienceId}/sampling-jobs`),
@@ -378,9 +376,4 @@ export const api = {
   getSettings: () => req<AppSettings>('GET', '/api/settings'),
   updateSettings: (body: Partial<AppSettings>) => req<AppSettings>('PUT', '/api/settings', body),
 
-  // Calibration
-  addCalibrationData: (expId: string, body: { question_id: string; field_key: string; real_responses: unknown[] }) =>
-    req<unknown>("POST", `/api/experiments/${expId}/calibrate`, body),
-  getCalibration: (expId: string) =>
-    req<CalibrationStatus>("GET", `/api/experiments/${expId}/calibration`),
 };

@@ -1401,12 +1401,6 @@ Respond authentically as this person would.`}
                 <CardHeader className="flex items-center justify-between py-3">
                   <span className="text-xs font-mono text-gray-400">{persona.id.slice(0, 8)}…</span>
                   <div className="flex items-center gap-2">
-                    {persona.flagged && <Badge color="red">Flagged</Badge>}
-                    {persona.plausibility != null && (
-                      <Badge color={persona.plausibility >= 0.7 ? 'green' : persona.plausibility >= 0.4 ? 'yellow' : 'red'}>
-                        {(persona.plausibility * 100).toFixed(0)}%
-                      </Badge>
-                    )}
                     <button
                       onClick={() => handleDeletePersona(persona.id)}
                       disabled={deletingPersonaId === persona.id}

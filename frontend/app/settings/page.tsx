@@ -52,6 +52,14 @@ const STEPS: StepMeta[] = [
     effectiveProviderKey: 'effective_validation_provider',
     effectiveModelKey: 'effective_validation_model',
   },
+  {
+    label: 'Insights / Analysis',
+    description: 'LLM used for per-field AI summaries and the deep-dive report on the Analysis page. Leave blank to inherit Pass 2 settings.',
+    providerKey: 'provider_insights',
+    modelKey: 'model_insights',
+    effectiveProviderKey: 'effective_insights_provider',
+    effectiveModelKey: 'effective_insights_model',
+  },
 ]
 
 // ── Main page ─────────────────────────────────────────────────────────────────
@@ -61,6 +69,7 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [modelOptions, setModelOptions] = useState<string[]>([])
 
   // Form state — write-only key fields start empty (never pre-filled)
   const [form, setForm] = useState<Record<string, unknown>>({})
@@ -70,6 +79,7 @@ export default function SettingsPage() {
       setLoading(true)
       const s = await api.getSettings()
       setSettings(s)
+      setModelOptions(Object.keys(s.model_pricing ?? {}).filter(k => k !== 'default'))
       setForm({
         provider_pass1: s.provider_pass1,
         model_pass1: s.model_pass1,
@@ -79,6 +89,8 @@ export default function SettingsPage() {
         model_backstory: s.model_backstory,
         provider_validation: s.provider_validation,
         model_validation: s.model_validation,
+        provider_insights: s.provider_insights,
+        model_insights: s.model_insights,
         lmstudio_base_url: s.lmstudio_base_url,
         openai_api_key: '',       // write-only — never pre-filled
         anthropic_api_key: '',    // write-only — never pre-filled
@@ -190,10 +202,12 @@ export default function SettingsPage() {
                       <label className={labelCls}>Model</label>
                       <input
                         type="text"
+                        list="known-models"
                         value={modelVal}
                         onChange={e => set(step.modelKey as string, e.target.value)}
                         className={inputCls}
                         placeholder={hasInherit ? 'leave blank to inherit' : 'e.g. gpt-4o'}
+                        autoComplete="off"
                       />
                     </div>
                   </div>
@@ -329,6 +343,10 @@ export default function SettingsPage() {
         <div className="flex justify-end">
           <Button type="submit" loading={saving}>Save Settings</Button>
         </div>
+
+        <datalist id="known-models">
+          {modelOptions.map(m => <option key={m} value={m} />)}
+        </datalist>
       </form>
     </div>
   )

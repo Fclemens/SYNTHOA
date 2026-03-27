@@ -22,7 +22,6 @@ from ..services.execution import launch_run, re_extract_run, retry_failed_tasks
 from ..services.sampling import sample_correlated_population
 from ..services.backstory import generate_backstory
 from ..services.variable_resolution import resolve_variables, resolve_dist_variables
-from ..services.validation import validate_persona
 
 router = APIRouter(prefix="/api", tags=["runs"])
 
@@ -69,14 +68,11 @@ async def launch_simulation(
         raw_traits = await sample_correlated_population(exp.audience_id, n, db)
         ids: list[str] = []
         for traits in raw_traits:
-            score, _ = validate_persona(traits)
             p = Persona(
                 id=str(uuid.uuid4()),
                 audience_id=exp.audience_id,
                 traits_json=traits,
-                backstory=None,   # generated in background before first use
-                plausibility=score,
-                flagged=score < settings.plausibility_threshold,
+                backstory=None,
             )
             db.add(p)
             ids.append(p.id)
@@ -97,7 +93,6 @@ async def launch_simulation(
         existing_result = await db.execute(
             select(Persona)
             .where(Persona.audience_id == exp.audience_id)
-            .where(Persona.flagged == False)  # noqa: E712
         )
         existing = existing_result.scalars().all()
 
@@ -364,11 +359,6 @@ async def export_run(
     )
     tasks = tasks_result.scalars().all()
 
-    # Get calibration level for badge
-    from ..models.simulation import CalibrationStatus
-    cal = await db.get(CalibrationStatus, run.experiment_id)
-    cal_level = cal.level if cal else "uncalibrated"
-
     rows = []
     for task in tasks:
         row: dict = {
@@ -379,7 +369,6 @@ async def export_run(
             "drift_flagged": task.drift_flagged,
             "pass1_cost_usd": task.pass1_cost_usd,
             "pass2_cost_usd": task.pass2_cost_usd,
-            "calibration_badge": cal_level,
         }
         # Injected variables — the {{placeholder}} values resolved for this persona/task.
         # Prefixed with "var_" so they are visually grouped and don't clash with output fields.
@@ -445,7 +434,7 @@ async def export_run(
             other_fill   = PatternFill("solid", fgColor="6B7280")   # grey
 
             meta_cols = {"task_id", "persona_id", "pass1_status", "pass2_status",
-                         "drift_flagged", "pass1_cost_usd", "pass2_cost_usd", "calibration_badge"}
+                         "drift_flagged", "pass1_cost_usd", "pass2_cost_usd"}
 
             for col_idx, h in enumerate(headers, 1):
                 if h in meta_cols:
@@ -509,7 +498,7 @@ async def export_run(
                     if k not in trait_keys:
                         trait_keys.append(k)
 
-        persona_headers = ["persona_id", "audience_id", "plausibility", "flagged", "backstory"] + trait_keys
+        persona_headers = ["persona_id", "audience_id", "backstory"] + trait_keys
         for col_idx, h in enumerate(persona_headers, 1):
             cell = ws_p.cell(row=1, column=col_idx, value=h)
             cell.font = header_font
@@ -524,8 +513,6 @@ async def export_run(
             row_vals = [
                 p.id,
                 p.audience_id,
-                p.plausibility,
-                p.flagged,
                 p.backstory or "",
             ] + [traits.get(k, "") for k in trait_keys]
             ws_p.append(row_vals)

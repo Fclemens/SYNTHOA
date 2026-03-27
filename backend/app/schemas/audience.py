@@ -198,15 +198,11 @@ class PersonaOut(BaseModel):
     audience_id: str
     traits_json: dict[str, Any]
     backstory: Optional[str]
-    plausibility: Optional[float]
-    flagged: bool
     created_at: datetime
 
 
 class SampleRequest(BaseModel):
     n: int = Field(ge=1, le=10000, default=100)
-    validate_plausibility: bool = True
-    llm_validation: bool = False
     reuse_existing: bool = False
     backstory_mode: Literal["none", "template", "llm"] = "llm"
 
@@ -219,8 +215,6 @@ class SamplingJobOut(BaseModel):
     n_requested: int
     n_completed: int
     backstory_mode: str
-    validate_plausibility: bool
-    llm_validation: bool
     created_at: datetime
     completed_at: Optional[datetime]
     error: Optional[str]
@@ -250,8 +244,6 @@ class ExportCorrelation(BaseModel):
 class ExportPersona(BaseModel):
     traits_json: dict[str, Any]
     backstory: Optional[str] = None
-    plausibility: Optional[float] = None
-    flagged: bool = False
 
 
 class AudienceExportBundle(BaseModel):

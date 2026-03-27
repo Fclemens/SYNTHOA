@@ -32,14 +32,14 @@ export default function ActiveRunsTracker() {
   const [pruning, setPruning]     = useState(false)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  async function poll() {
+  async function poll(): Promise<boolean> {
     try {
       const all = await api.listRuns(undefined, MAX_SHOWN)
       setRuns(all.slice(0, MAX_SHOWN))
 
       // Fetch detailed task progress for every active run
       const active = all.filter(r => isActive(r.status))
-      if (active.length === 0) return
+      if (active.length === 0) return false   // signal: no active runs
       const results = await Promise.allSettled(
         active.map(r => api.getRunProgress(r.id).then(p => ({ id: r.id, p })))
       )
@@ -48,8 +48,10 @@ export default function ActiveRunsTracker() {
         if (res.status === 'fulfilled') map[res.value.id] = res.value.p
       }
       setProgress(prev => ({ ...prev, ...map }))
+      return true   // signal: still have active runs
     } catch {
       // backend may be restarting
+      return true   // keep polling so we can recover
     }
   }
 
@@ -68,9 +70,33 @@ export default function ActiveRunsTracker() {
   }
 
   useEffect(() => {
-    poll()
-    intervalRef.current = setInterval(poll, POLL_MS)
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
+    let cancelled = false
+
+    async function startPolling() {
+      const hasActive = await poll()
+      if (cancelled) return
+
+      if (hasActive) {
+        // Active runs present — poll repeatedly and stop when they finish
+        intervalRef.current = setInterval(async () => {
+          const stillActive = await poll()
+          if (!stillActive && intervalRef.current) {
+            clearInterval(intervalRef.current)
+            intervalRef.current = null
+          }
+        }, POLL_MS)
+      }
+      // No active runs — single load only, no interval
+    }
+
+    startPolling()
+    return () => {
+      cancelled = true
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+    }
   }, [])
 
   if (runs.length === 0) return null

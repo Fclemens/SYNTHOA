@@ -12,7 +12,6 @@ from sqlalchemy import select
 from ..models.audience import Audience, Persona, SamplingJob
 from ..services.backstory import generate_backstory, generate_backstory_template
 from ..services.sampling import sample_correlated_population
-from ..services.validation import validate_persona, validate_persona_llm
 from ..config import settings
 
 logger = logging.getLogger(__name__)
@@ -62,18 +61,6 @@ async def run_sampling_job(job_id: str) -> None:
                     continue
                 traits = raw_traits[0]
 
-                plausibility = None
-                flagged = False
-                if job.validate_plausibility:
-                    score, _ = validate_persona(traits)
-                    plausibility = score
-                    flagged = score < settings.plausibility_threshold
-
-                    if job.llm_validation and not flagged:
-                        llm_score, _ = await validate_persona_llm(traits, settings.effective_validation_model)
-                        plausibility = (score + llm_score) / 2
-                        flagged = plausibility < settings.plausibility_threshold
-
                 backstory = None
                 mode = getattr(job, "backstory_mode", "llm")
                 if mode == "llm":
@@ -94,8 +81,6 @@ async def run_sampling_job(job_id: str) -> None:
                     audience_id=job.audience_id,
                     traits_json=traits,
                     backstory=backstory,
-                    plausibility=plausibility,
-                    flagged=flagged,
                 )
                 db.add(persona)
 

@@ -80,15 +80,9 @@ function VarFormFields({ form, setForm }: { form: VarFormState; setForm: React.D
   ]
   return (
     <div className="space-y-4">
-      <div className={row}>
-        <div>
-          <label className={lbl}>Name <span className="text-red-500">*</span></label>
-          <input type="text" required value={form.name} onChange={e => set({ name: e.target.value })} className={inp} placeholder="e.g. price, brand, region" />
-        </div>
-        <div>
-          <label className={lbl}>Sort order</label>
-          <input type="number" min={0} value={form.sort_order} onChange={e => set({ sort_order: parseInt(e.target.value) || 0 })} className={inp} />
-        </div>
+      <div>
+        <label className={lbl}>Name <span className="text-red-500">*</span></label>
+        <input type="text" required value={form.name} onChange={e => set({ name: e.target.value })} className={inp} placeholder="e.g. price, brand, region" />
       </div>
       <div>
         <label className={lbl}>Variable type</label>
@@ -140,9 +134,10 @@ function VarFormFields({ form, setForm }: { form: VarFormState; setForm: React.D
 
 // ── Question type helpers ────────────────────────────────────────────────────
 
-function questionTypeColor(t: Question['question_type']): 'blue' | 'purple' | 'green' {
+function questionTypeColor(t: Question['question_type']): 'blue' | 'purple' | 'green' | 'indigo' {
   switch (t) {
     case 'scale': return 'blue'
+    case 'single_choice': return 'indigo'
     case 'multiple_choice': return 'purple'
     default: return 'green'
   }
@@ -519,6 +514,12 @@ function VariablesTab({ experiment, onChanged }: { experiment: Experiment; onCha
 
   const vars = (experiment.dist_variables ?? []).slice().sort((a, b) => a.sort_order - b.sort_order)
 
+  // Compute which variable names are referenced in any question text
+  const allQuestionText = (experiment.questions ?? []).map(q => q.question_text).join(' ')
+  const referencedVarNames = new Set(
+    [...allQuestionText.matchAll(/\{([^}]+)\}/g)].map(m => m[1])
+  )
+
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
@@ -538,12 +539,15 @@ function VariablesTab({ experiment, onChanged }: { experiment: Experiment; onCha
       ) : (
         <Card>
           <div className="divide-y divide-gray-100">
-            {vars.map(v => (
+            {vars.map(v => {
+              const isUsed = referencedVarNames.has(v.name)
+              return (
               <div key={v.id} className="flex items-center gap-4 px-5 py-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <code className="text-sm font-semibold text-indigo-700">{'{' + v.name + '}'}</code>
                     <Badge color={v.var_type === 'continuous' ? 'blue' : 'purple'}>{v.var_type}</Badge>
+                    {isUsed && <span className="text-xs text-green-600 font-medium">used in questions</span>}
                   </div>
                   <p className="text-xs text-gray-500 mt-0.5 truncate">{distSummary(v)}</p>
                 </div>
@@ -554,7 +558,7 @@ function VariablesTab({ experiment, onChanged }: { experiment: Experiment; onCha
                   </button>
                 </div>
               </div>
-            ))}
+            )})}
           </div>
         </Card>
       )}
@@ -593,6 +597,8 @@ function QuestionsTab({ experiment, onChanged }: { experiment: Experiment; onCha
     ask_why: false,
     scale_min: 1,
     scale_max: 10,
+    scale_anchor_low: '',
+    scale_anchor_high: '',
     choices: '',
   })
 
@@ -610,6 +616,8 @@ function QuestionsTab({ experiment, onChanged }: { experiment: Experiment; onCha
       ask_why: false,
       scale_min: 1,
       scale_max: 10,
+      scale_anchor_low: '',
+      scale_anchor_high: '',
       choices: '',
     })
   }
@@ -623,6 +631,8 @@ function QuestionsTab({ experiment, onChanged }: { experiment: Experiment; onCha
       ask_why: q.ask_why,
       scale_min: q.scale_min ?? 1,
       scale_max: q.scale_max ?? 10,
+      scale_anchor_low: q.scale_anchor_low ?? '',
+      scale_anchor_high: q.scale_anchor_high ?? '',
       choices: q.choices?.join(', ') ?? '',
     })
     setModalOpen(true)
@@ -649,8 +659,12 @@ function QuestionsTab({ experiment, onChanged }: { experiment: Experiment; onCha
         question_type: form.question_type,
         sort_order: form.sort_order,
         ask_why: form.ask_why,
-        ...(form.question_type === 'scale' && { scale_min: form.scale_min, scale_max: form.scale_max }),
-        ...(form.question_type === 'multiple_choice' && {
+        ...(form.question_type === 'scale' && {
+          scale_min: form.scale_min, scale_max: form.scale_max,
+          scale_anchor_low: form.scale_anchor_low || undefined,
+          scale_anchor_high: form.scale_anchor_high || undefined,
+        }),
+        ...((form.question_type === 'multiple_choice' || form.question_type === 'single_choice') && {
           choices: form.choices.split(',').map(s => s.trim()).filter(Boolean),
         }),
       }
@@ -777,9 +791,13 @@ function QuestionsTab({ experiment, onChanged }: { experiment: Experiment; onCha
                     <Badge color={questionTypeColor(q.question_type)}>{q.question_type}</Badge>
                     {q.ask_why && <Badge color="yellow">ask why</Badge>}
                     {q.question_type === 'scale' && (
-                      <span className="text-xs text-gray-500">{q.scale_min} – {q.scale_max}</span>
+                      <span className="text-xs text-gray-500">
+                        {q.scale_min} – {q.scale_max}
+                        {q.scale_anchor_low && ` · "${q.scale_anchor_low}"`}
+                        {q.scale_anchor_high && ` → "${q.scale_anchor_high}"`}
+                      </span>
                     )}
-                    {q.question_type === 'multiple_choice' && q.choices && (
+                    {(q.question_type === 'multiple_choice' || q.question_type === 'single_choice') && q.choices && (
                       <span className="text-xs text-gray-500">{q.choices.join(', ')}</span>
                     )}
                   </div>
@@ -839,43 +857,52 @@ function QuestionsTab({ experiment, onChanged }: { experiment: Experiment; onCha
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Type</label>
-              <select value={form.question_type}
-                onChange={e => setForm(f => ({ ...f, question_type: e.target.value as Question['question_type'] }))}
-                className={inputCls}>
-                <option value="open_ended">Open Ended</option>
-                <option value="scale">Scale</option>
-                <option value="multiple_choice">Multiple Choice</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Sort Order</label>
-              <input type="number" min={1} value={form.sort_order}
-                onChange={e => setForm(f => ({ ...f, sort_order: parseInt(e.target.value) || 1 }))}
-                className={inputCls} />
-            </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Type</label>
+            <select value={form.question_type}
+              onChange={e => setForm(f => ({ ...f, question_type: e.target.value as Question['question_type'] }))}
+              className={inputCls}>
+              <option value="open_ended">Open Ended</option>
+              <option value="scale">Scale</option>
+              <option value="single_choice">Single Choice</option>
+              <option value="multiple_choice">Multiple Choice</option>
+            </select>
           </div>
 
           {form.question_type === 'scale' && (
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Scale Min</label>
-                <input type="number" value={form.scale_min}
-                  onChange={e => setForm(f => ({ ...f, scale_min: parseInt(e.target.value) }))}
-                  className={inputCls} />
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Scale Min</label>
+                  <input type="number" value={form.scale_min}
+                    onChange={e => setForm(f => ({ ...f, scale_min: parseInt(e.target.value) }))}
+                    className={inputCls} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Scale Max</label>
+                  <input type="number" value={form.scale_max}
+                    onChange={e => setForm(f => ({ ...f, scale_max: parseInt(e.target.value) }))}
+                    className={inputCls} />
+                </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Scale Max</label>
-                <input type="number" value={form.scale_max}
-                  onChange={e => setForm(f => ({ ...f, scale_max: parseInt(e.target.value) }))}
-                  className={inputCls} />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Low anchor label <span className="text-gray-400 font-normal">(optional)</span></label>
+                  <input type="text" value={form.scale_anchor_low}
+                    onChange={e => setForm(f => ({ ...f, scale_anchor_low: e.target.value }))}
+                    className={inputCls} placeholder="e.g. Not at all likely" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">High anchor label <span className="text-gray-400 font-normal">(optional)</span></label>
+                  <input type="text" value={form.scale_anchor_high}
+                    onChange={e => setForm(f => ({ ...f, scale_anchor_high: e.target.value }))}
+                    className={inputCls} placeholder="e.g. Extremely likely" />
+                </div>
               </div>
-            </div>
+            </>
           )}
 
-          {form.question_type === 'multiple_choice' && (
+          {(form.question_type === 'multiple_choice' || form.question_type === 'single_choice') && (
             <div>
               <label className="block text-sm font-medium text-gray-700">Choices (comma-separated)</label>
               <input type="text" value={form.choices}
@@ -967,12 +994,6 @@ function SchemaTab({ experiment, onChanged }: { experiment: Experiment; onChange
         </Card>
       ) : (
         <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-gray-500">Version {currentSchema?.version ?? 1}</span>
-              {currentSchema && <span className="text-xs text-gray-400">{fmtDate(currentSchema.created_at)}</span>}
-            </div>
-          </CardHeader>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -1111,11 +1132,14 @@ function LaunchTab({ experiment }: { experiment: Experiment }) {
     sample_fresh: false,
   })
   const [defaultModels, setDefaultModels] = useState({ pass1: 'gpt-4o', pass2: 'gpt-4o-mini' })
+  const [modelOptions, setModelOptions] = useState<string[]>([])
 
   // Load current settings to show effective model names
   useEffect(() => {
     api.getSettings().then(s => {
       setDefaultModels({ pass1: s.model_pass1, pass2: s.model_pass2 })
+      const opts = Object.keys(s.model_pricing ?? {}).filter(k => k !== 'default')
+      setModelOptions(opts)
       setForm(f => ({
         ...f,
         model_pass1: f.model_pass1 || s.model_pass1,
@@ -1215,23 +1239,29 @@ function LaunchTab({ experiment }: { experiment: Experiment }) {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className="block text-sm font-medium text-gray-700">Model Pass 1 (interview)</label>
-              <input
-                type="text"
+              <select
                 value={form.model_pass1}
                 onChange={e => setForm(f => ({ ...f, model_pass1: e.target.value }))}
-                className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                placeholder={defaultModels.pass1}
-              />
+                className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white"
+              >
+                {modelOptions.map(m => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+              <p className="mt-0.5 text-xs text-gray-400">Default: {defaultModels.pass1}</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700">Model Pass 2 (extraction)</label>
-              <input
-                type="text"
+              <select
                 value={form.model_pass2}
                 onChange={e => setForm(f => ({ ...f, model_pass2: e.target.value }))}
-                className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                placeholder={defaultModels.pass2}
-              />
+                className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white"
+              >
+                {modelOptions.map(m => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+              <p className="mt-0.5 text-xs text-gray-400">Default: {defaultModels.pass2}</p>
             </div>
           </div>
 
@@ -1290,27 +1320,11 @@ function LaunchTab({ experiment }: { experiment: Experiment }) {
               </div>
             </div>
 
-            {preflight.plausibility_summary.flagged_count > 0 && (
-              <div className="rounded-lg bg-yellow-50 p-3">
-                <p className="text-sm font-medium text-yellow-700">
-                  {preflight.plausibility_summary.flagged_count} persona(s) flagged for plausibility review
-                </p>
-                <p className="text-xs text-yellow-600 mt-1">
-                  Mean plausibility score: {(preflight.plausibility_summary.mean_score * 100).toFixed(0)}%
-                </p>
-              </div>
-            )}
-
-            {preflight.plausibility_summary.flagged_count === 0 && (
-              <div className="rounded-lg bg-green-50 p-3">
-                <p className="text-sm text-green-700">All personas passed plausibility check.</p>
-              </div>
-            )}
           </CardBody>
         ) : (
           <CardBody>
             <p className="text-sm text-gray-500">
-              Run a preflight check to estimate cost and validate persona plausibility before launching.
+              Run a preflight check to estimate token cost before launching.
             </p>
           </CardBody>
         )}

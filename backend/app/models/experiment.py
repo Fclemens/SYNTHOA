@@ -19,6 +19,7 @@ class Experiment(Base):
     global_context: Mapped[str] = mapped_column(String, nullable=False, default="")
     execution_mode: Mapped[str] = mapped_column(String, nullable=False, default="pooled")  # "pooled" | "dedicated"
     drift_detection_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    synonym_injection_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")  # legacy compat
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     variables: Mapped[list["ExperimentVariable"]] = relationship(
@@ -68,11 +69,13 @@ class Question(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     experiment_id: Mapped[str] = mapped_column(String, ForeignKey("experiments.id", ondelete="CASCADE"), nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
-    question_type: Mapped[str] = mapped_column(String, nullable=False)  # "scale" | "multiple_choice" | "open_ended"
+    question_type: Mapped[str] = mapped_column(String, nullable=False)  # "scale" | "single_choice" | "multiple_choice" | "open_ended"
     question_text: Mapped[str] = mapped_column(String, nullable=False)
     scale_min: Mapped[int | None] = mapped_column(Integer)
     scale_max: Mapped[int | None] = mapped_column(Integer)
-    choices: Mapped[list | None] = mapped_column(JSON)  # JSON array for multiple_choice
+    scale_anchor_low: Mapped[str | None] = mapped_column(String)   # e.g. "Not at all likely"
+    scale_anchor_high: Mapped[str | None] = mapped_column(String)  # e.g. "Extremely likely"
+    choices: Mapped[list | None] = mapped_column(JSON)  # JSON array for single/multiple choice
     ask_why: Mapped[bool] = mapped_column(Boolean, default=False)
     prompting_mode: Mapped[str | None] = mapped_column(String)  # None | "pooled" | "dedicated"
 

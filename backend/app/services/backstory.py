@@ -114,9 +114,11 @@ async def generate_backstory(
         generation_prompt = elaboration_template.replace("{profile}", backstory_base).strip()
     else:
         generation_prompt = (
-            "Based on the persona description below, write a concise but rich first-person "
-            "system prompt (150-250 words) which this person would use to anchor their responses "
-            "in a research interview. Preserve all factual details. Output ONLY the system prompt text.\n\n"
+            "Based on the persona description below, write a concise but rich second-person "
+            "system prompt (150-250 words) for a research interview. "
+            "Begin with 'You are...' and describe the persona's background, attitudes, and context "
+            "as instructions to the LLM playing this role. Preserve all factual details. "
+            "Output ONLY the system prompt text.\n\n"
             f"{backstory_base}"
         )
 

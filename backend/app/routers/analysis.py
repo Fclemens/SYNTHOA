@@ -84,17 +84,20 @@ async def summarize_field(
     if field.get("n", 0) == 0:
         raise HTTPException(status_code=400, detail="No data available for this field")
 
+    model = settings.effective_insights_model
+    provider = settings.effective_insights_provider
     text, tin, tout = await summarize_field_llm(
         field_key=body.field_key,
         field_data=field,
-        model=settings.model_pass2,
-        provider=settings.provider_pass2,
+        model=model,
+        provider=provider,
     )
-    cost = get_price(settings.model_pass2, tin, tout)
+    cost = get_price(model, tin, tout)
 
     return {
         "key": body.field_key,
         "llm_summary": text,
+        "model": model,
         "tokens_in": tin,
         "tokens_out": tout,
         "cost_usd": cost,
@@ -128,19 +131,21 @@ async def deep_dive(
     summary = compute_summary(run, tasks, body.confidence_threshold)
     experiment_name = await _get_experiment_name(run.experiment_id, db)
 
+    ins_model = settings.effective_insights_model
+    ins_provider = settings.effective_insights_provider
     text, tin, tout = await generate_deep_dive(
         run=run,
         summary=summary,
         experiment_name=experiment_name,
-        model=settings.model_pass2,
-        provider=settings.provider_pass2,
+        model=ins_model,
+        provider=ins_provider,
     )
-    cost = get_price(settings.model_pass2, tin, tout)
+    cost = get_price(ins_model, tin, tout)
     now = datetime.now(timezone.utc).isoformat()
 
     result: dict[str, Any] = {
         "analysis": text,
-        "model": settings.model_pass2,
+        "model": ins_model,
         "tokens_in": tin,
         "tokens_out": tout,
         "cost_usd": cost,

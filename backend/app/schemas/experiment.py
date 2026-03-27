@@ -59,10 +59,12 @@ class ExperimentVariableOut(BaseModel):
 
 class QuestionCreate(BaseModel):
     sort_order: int
-    question_type: Literal["scale", "multiple_choice", "open_ended"]
+    question_type: Literal["scale", "single_choice", "multiple_choice", "open_ended"]
     question_text: str
     scale_min: Optional[int] = None
     scale_max: Optional[int] = None
+    scale_anchor_low: Optional[str] = None
+    scale_anchor_high: Optional[str] = None
     choices: Optional[list[str]] = None
     ask_why: bool = False
     prompting_mode: Optional[Literal["pooled", "dedicated"]] = None
@@ -70,10 +72,12 @@ class QuestionCreate(BaseModel):
 
 class QuestionUpdate(BaseModel):
     sort_order: Optional[int] = None
-    question_type: Optional[Literal["scale", "multiple_choice", "open_ended"]] = None
+    question_type: Optional[Literal["scale", "single_choice", "multiple_choice", "open_ended"]] = None
     question_text: Optional[str] = None
     scale_min: Optional[int] = None
     scale_max: Optional[int] = None
+    scale_anchor_low: Optional[str] = None
+    scale_anchor_high: Optional[str] = None
     choices: Optional[list[str]] = None
     ask_why: Optional[bool] = None
     prompting_mode: Optional[Literal["pooled", "dedicated"]] = None
@@ -92,6 +96,8 @@ class QuestionOut(BaseModel):
     question_text: str
     scale_min: Optional[int]
     scale_max: Optional[int]
+    scale_anchor_low: Optional[str]
+    scale_anchor_high: Optional[str]
     choices: Optional[list[Any]]
     ask_why: bool
     prompting_mode: Optional[str]
@@ -173,8 +179,6 @@ class PersonaPayload(BaseModel):
     backstory_preview: str
     resolved_variables: dict[str, str]
     questions: list[ResolvedQuestion]
-    plausibility: float
-    flags: list[str]
 
 
 class TokenEstimate(BaseModel):
@@ -191,15 +195,8 @@ class CostEstimate(BaseModel):
     per_persona: float
 
 
-class PlausibilitySummary(BaseModel):
-    mean_score: float
-    flagged_count: int
-    flags: list[list[str]]
-
-
 class PreflightReport(BaseModel):
     payloads: list[PersonaPayload]
-    plausibility_summary: PlausibilitySummary
     variable_distributions: dict[str, dict[str, int]]
     token_estimate: TokenEstimate
     cost_estimate: CostEstimate

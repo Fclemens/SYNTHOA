@@ -12,6 +12,7 @@ import {
   FieldSummaryBoolean,
   FieldSummaryText,
   DeepDiveResult,
+  AppSettings,
 } from '@/lib/api'
 import PromptEditorModal from '@/components/PromptEditorModal'
 
@@ -148,11 +149,13 @@ function FieldCard({
   field,
   runId,
   confidenceThreshold,
+  insightsModel,
   onSummaryGenerated,
 }: {
   field: FieldSummary
   runId: string
   confidenceThreshold: number
+  insightsModel: string
   onSummaryGenerated: (key: string, summary: string) => void
 }) {
   const ftype = field.type
@@ -225,11 +228,12 @@ function FieldCard({
             <p className="text-xs text-gray-700 leading-relaxed">{llmSummary}</p>
           </div>
         )}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={handleSummarize}
             disabled={summarizing}
             className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            title={`Summarise "${label}" using ${insightsModel}`}
           >
             {summarizing ? (
               <svg className="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -254,6 +258,7 @@ function FieldCard({
             Edit prompt
           </button>
           {sumError && <span className="text-xs text-red-500">{sumError}</span>}
+          <span className="text-xs text-gray-300 font-mono ml-auto">{insightsModel}</span>
         </div>
       </div>
 
@@ -303,6 +308,7 @@ export default function AnalysisDetailPage() {
   const [promptOpen, setPromptOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [runInfo, setRunInfo] = useState<{ created_at: string; model_pass1: string; total_cost_usd: number } | null>(null)
+  const [insightsModel, setInsightsModel] = useState<string>('…')
 
   const fetchSummary = useCallback(async (threshold: number) => {
     setLoadingSummary(true)
@@ -320,6 +326,11 @@ export default function AnalysisDetailPage() {
       setLoadingSummary(false)
     }
   }, [runId])
+
+  // Load insights model from settings once
+  useEffect(() => {
+    api.getSettings().then(s => setInsightsModel(s.effective_insights_model)).catch(() => {})
+  }, [])
 
   useEffect(() => { fetchSummary(confidenceThreshold) }, [fetchSummary, confidenceThreshold])
 
@@ -455,6 +466,7 @@ export default function AnalysisDetailPage() {
                 field={field}
                 runId={runId}
                 confidenceThreshold={confidenceThreshold}
+                insightsModel={insightsModel}
                 onSummaryGenerated={handleSummaryGenerated}
               />
             ))}
@@ -470,11 +482,12 @@ export default function AnalysisDetailPage() {
       {/* Deep Dive tab */}
       {tab === 'deepdive' && (
         <div>
-          <div className="flex items-center gap-2 mb-5">
+          <div className="flex items-center gap-2 mb-5 flex-wrap">
             <button
               onClick={handleGenerateDeepDive}
               disabled={loadingDeepDive}
               className="flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+              title={`Generate full analysis report using ${insightsModel}`}
             >
               {loadingDeepDive ? (
                 <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -488,6 +501,9 @@ export default function AnalysisDetailPage() {
               )}
               {deepDive ? 'Re-generate analysis' : 'Generate AI analysis'}
             </button>
+            <span className="text-xs font-mono text-gray-400 bg-gray-50 border border-gray-200 rounded px-2 py-1" title="Insights model (change in Settings)">
+              {insightsModel}
+            </span>
             <button
               onClick={() => setPromptOpen(true)}
               className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors"

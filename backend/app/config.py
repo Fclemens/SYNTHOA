@@ -33,12 +33,14 @@ class Settings(BaseSettings):
     provider_pass2: str = "openai"
     provider_backstory: str = ""     # "" → inherit from provider_pass2
     provider_validation: str = ""    # "" → inherit from provider_pass2
+    provider_insights: str = ""      # "" → inherit from provider_pass2
 
     # ── Per-step model selection ──────────────────────────────────────────────
     model_pass1: str = "gpt-4o"           # Pass 1: respondent interview
     model_pass2: str = "gpt-4o-mini"      # Pass 2: dual extraction
     model_backstory: str = ""             # "" → inherit from model_pass2
     model_validation: str = ""            # "" → inherit from model_pass2
+    model_insights: str = ""              # "" → inherit from model_pass2
 
     # ── Database ──────────────────────────────────────────────────────────────
     database_url: str = "sqlite+aiosqlite:///./genai_simulator.db"
@@ -80,6 +82,14 @@ class Settings(BaseSettings):
     @property
     def effective_validation_provider(self) -> str:
         return self.provider_validation or self.provider_pass2
+
+    @property
+    def effective_insights_model(self) -> str:
+        return self.model_insights or self.model_pass2
+
+    @property
+    def effective_insights_provider(self) -> str:
+        return self.provider_insights or self.provider_pass2
 
 
 settings = Settings()

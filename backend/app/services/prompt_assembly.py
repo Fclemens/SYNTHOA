@@ -69,9 +69,21 @@ def build_pooled_prompt(
     for q in questions:
         line = f"Q{q['sort_order']}: {q['text']}"
         if q["type"] == "scale":
-            line += f"\n  (Answer on a scale of {q.get('scale_min', 1)} to {q.get('scale_max', 10)})"
+            lo, hi = q.get('scale_min', 1), q.get('scale_max', 10)
+            anchor_lo = q.get('scale_anchor_low', '')
+            anchor_hi = q.get('scale_anchor_high', '')
+            if anchor_lo and anchor_hi:
+                line += f"\n  (Answer on a scale of {lo} to {hi}, where {lo} = \"{anchor_lo}\" and {hi} = \"{anchor_hi}\")"
+            elif anchor_lo:
+                line += f"\n  (Answer on a scale of {lo} to {hi}, where {lo} = \"{anchor_lo}\")"
+            elif anchor_hi:
+                line += f"\n  (Answer on a scale of {lo} to {hi}, where {hi} = \"{anchor_hi}\")"
+            else:
+                line += f"\n  (Answer on a scale of {lo} to {hi})"
+        elif q["type"] == "single_choice" and q.get("choices"):
+            line += f"\n  Select ONE option: {', '.join(q['choices'])}"
         elif q["type"] == "multiple_choice" and q.get("choices"):
-            line += f"\n  Options: {', '.join(q['choices'])}"
+            line += f"\n  Options (select all that apply): {', '.join(q['choices'])}"
         if q.get("ask_why"):
             line += "\n  IMPORTANT: Before giving your answer, explain your reasoning step by step."
         q_lines.append(line)
@@ -130,6 +142,17 @@ def build_dedicated_messages(
 
     for q in questions:
         q_text = q["text"]
+        if q["type"] == "scale":
+            lo, hi = q.get('scale_min', 1), q.get('scale_max', 10)
+            anchor_lo, anchor_hi = q.get('scale_anchor_low', ''), q.get('scale_anchor_high', '')
+            if anchor_lo and anchor_hi:
+                q_text += f"\n(Answer on a scale of {lo} to {hi}, where {lo} = \"{anchor_lo}\" and {hi} = \"{anchor_hi}\")"
+            else:
+                q_text += f"\n(Answer on a scale of {lo} to {hi})"
+        elif q["type"] == "single_choice" and q.get("choices"):
+            q_text += f"\nSelect ONE option: {', '.join(q['choices'])}"
+        elif q["type"] == "multiple_choice" and q.get("choices"):
+            q_text += f"\nOptions (select all that apply): {', '.join(q['choices'])}"
         if q.get("ask_why"):
             q_text += "\nPlease think through your reasoning before answering."
 

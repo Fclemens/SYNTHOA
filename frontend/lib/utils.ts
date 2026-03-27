@@ -40,14 +40,6 @@ export function taskStatusColor(status: string): 'gray' | 'blue' | 'green' | 're
   }
 }
 
-export function calibrationColor(badge: string | null): 'green' | 'yellow' | 'gray' {
-  switch (badge) {
-    case 'calibrated':   return 'green'
-    case 'directional':  return 'yellow'
-    default:             return 'gray'
-  }
-}
-
 export function pct(completed: number, total: number): number {
   if (!total) return 0
   return Math.round((completed / total) * 100)
