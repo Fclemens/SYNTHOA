@@ -19,3 +19,6 @@ frontend/.next/
 # OS
 .DS_Store
 Thumbs.db
+
+# Docker env (may contain secrets)
+.env

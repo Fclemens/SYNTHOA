@@ -1,0 +1,46 @@
+# GenAI Customer Simulator — local stack
+#
+# Usage:
+#   cp .env.example .env   # fill in at least one LLM API key
+#   docker compose up --build
+#
+# Then open http://localhost:3000
+
+services:
+  backend:
+    build:
+      context: ./backend
+    image: genai-simulator-backend:latest
+    container_name: genai-simulator-backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      # All mutable state — SQLite DB, edited prompts, settings overrides — lives here
+      - appdata:/app/data
+    environment:
+      DATABASE_URL: sqlite+aiosqlite:////app/data/genai_simulator.db
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-not-set}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LMSTUDIO_BASE_URL: ${LMSTUDIO_BASE_URL:-http://127.0.0.1:1234/v1}
+      MAX_CONCURRENT_TASKS: ${MAX_CONCURRENT_TASKS:-10}
+      TPM_LIMIT: ${TPM_LIMIT:-2000000}
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Baked into the client bundle at build time. If you change ports or
+        # expose the backend on a different host, rebuild: `docker compose build frontend`
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    image: genai-simulator-frontend:latest
+    container_name: genai-simulator-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      - backend
+
+volumes:
+  appdata:
+    name: genai-simulator-appdata

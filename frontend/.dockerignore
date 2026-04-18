@@ -1,0 +1,25 @@
+node_modules
+.next
+.turbo
+.vercel
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# VCS / editor
+.git
+.gitignore
+.vscode
+.idea
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+tsconfig.tsbuildinfo
+*.log
+npm-debug.log*
