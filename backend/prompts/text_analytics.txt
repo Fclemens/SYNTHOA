@@ -1,0 +1,33 @@
+You are a research analyst performing quantitative text analytics on open-ended survey responses.
+
+Field: {field_key}
+Description: {field_description}
+Number of responses: {n}
+
+Responses (numbered):
+{answers}
+
+Your task is to return a strict JSON object (no preamble, no code fences) with this exact shape:
+
+{{
+  "themes": [
+    {{"name": "<short theme name, 2-4 words>", "description": "<one sentence>", "count": <int>, "example_indices": [<response numbers that match>]}}
+  ],
+  "sentiment": {{
+    "positive_pct": <int 0-100>,
+    "neutral_pct": <int 0-100>,
+    "negative_pct": <int 0-100>
+  }},
+  "per_response_sentiment": [
+    {{"index": <response number>, "sentiment": "positive" | "neutral" | "negative"}}
+  ]
+}}
+
+Rules:
+- Identify 3-6 distinct themes. Each response may belong to multiple themes.
+- `count` is the number of responses containing that theme.
+- `example_indices` lists up to 5 representative response numbers.
+- `positive_pct + neutral_pct + negative_pct` must equal 100.
+- `per_response_sentiment` must include EVERY response, referenced by its number.
+
+Return only the JSON object.

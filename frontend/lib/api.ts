@@ -186,6 +186,32 @@ export interface RunAnalysisSummary {
   fields: Record<string, FieldSummary>;
 }
 export interface FieldSummarizeResult { key: string; llm_summary: string; }
+
+export interface TextTheme {
+  name: string;
+  description: string;
+  count: number;
+  example_indices: number[];
+}
+export interface TextSentiment {
+  positive_pct: number;
+  neutral_pct: number;
+  negative_pct: number;
+}
+export interface PerResponseSentiment {
+  index: number;
+  sentiment: 'positive' | 'neutral' | 'negative';
+}
+export interface TextAnalyticsResult {
+  key: string;
+  themes: TextTheme[];
+  sentiment: TextSentiment;
+  per_response_sentiment: PerResponseSentiment[];
+  model: string;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+}
 export interface DeepDiveResult {
   analysis: string;
   model: string;
@@ -193,6 +219,36 @@ export interface DeepDiveResult {
   tokens_out: number;
   cost_usd: number;
   generated_at: string;
+  analysis_type?: string;
+  context_mode?: string;
+}
+
+export type AnalysisType = 'executive_summary' | 'segment_analysis' | 'opportunity_map' | 'objection_analysis' | 'custom'
+export type ContextMode = 'quick' | 'standard' | 'full'
+
+export interface DeepDiveRequest {
+  confidence_threshold?: number;
+  analysis_type?: AnalysisType;
+  context_mode?: ContextMode;
+  sample_size?: number;
+  custom_prompt?: string;
+}
+
+export interface Respondent {
+  task_id: string;
+  persona_id: string;
+  persona_traits: Record<string, unknown>;
+  backstory: string;
+  injected_vars: Record<string, unknown>;
+  raw_transcript: string;
+  extracted_json: Record<string, unknown>;
+  extraction_confidence: Record<string, number>;
+  drift_flagged: boolean;
+  drift_scores: number[];
+  pass1_status: string;
+  pass2_status: string;
+  pass1_cost_usd: number;
+  pass2_cost_usd: number;
 }
 
 export interface ModelPricing { input: number; output: number }
@@ -366,8 +422,12 @@ export const api = {
     req<RunAnalysisSummary>("GET", `/api/runs/${runId}/analysis/summary?confidence_threshold=${confidenceThreshold}`),
   summarizeField: (runId: string, fieldKey: string, confidenceThreshold = 0) =>
     req<FieldSummarizeResult>("POST", `/api/runs/${runId}/analysis/summarize-field`, { field_key: fieldKey, confidence_threshold: confidenceThreshold }),
-  generateDeepDive: (runId: string, confidenceThreshold = 0) =>
-    req<DeepDiveResult>("POST", `/api/runs/${runId}/analysis/deep-dive`, { confidence_threshold: confidenceThreshold }),
+  textAnalytics: (runId: string, fieldKey: string, confidenceThreshold = 0) =>
+    req<TextAnalyticsResult>("POST", `/api/runs/${runId}/analysis/text-analytics`, { field_key: fieldKey, confidence_threshold: confidenceThreshold }),
+  generateDeepDive: (runId: string, body: DeepDiveRequest) =>
+    req<DeepDiveResult>("POST", `/api/runs/${runId}/analysis/deep-dive`, body),
+  getRespondents: (runId: string) =>
+    req<Respondent[]>("GET", `/api/runs/${runId}/respondents`),
   getPrompt: (name: string) => req<{ name: string; content: string }>("GET", `/api/analysis/prompts/${name}`),
   updatePrompt: (name: string, content: string) => req<{ name: string; content: string }>("PUT", `/api/analysis/prompts/${name}`, { content }),
   exportAnalysisPdf: (runId: string): string => `${BASE}/api/runs/${runId}/analysis/export-pdf`,

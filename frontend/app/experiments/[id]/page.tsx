@@ -517,7 +517,7 @@ function VariablesTab({ experiment, onChanged }: { experiment: Experiment; onCha
   // Compute which variable names are referenced in any question text
   const allQuestionText = (experiment.questions ?? []).map(q => q.question_text).join(' ')
   const referencedVarNames = new Set(
-    [...allQuestionText.matchAll(/\{([^}]+)\}/g)].map(m => m[1])
+    Array.from(allQuestionText.matchAll(/\{([^}]+)\}/g), m => m[1])
   )
 
   return (

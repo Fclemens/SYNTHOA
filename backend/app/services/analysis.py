@@ -8,7 +8,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from ..services.llm_client import call_llm, get_price
+from ..services.llm_client import call_llm, get_price, parse_json_response
 
 PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 
@@ -218,24 +218,61 @@ async def summarize_field_llm(
     return await call_llm(prompt, model=model, provider=provider, temperature=0.3)
 
 
-async def generate_deep_dive(
-    run: Any,
-    summary: dict,
-    experiment_name: str,
+async def analyze_text_field(
+    field_key: str,
+    field_data: dict,
     model: str,
     provider: str,
-) -> tuple[str, int, int]:
-    """Call LLM to produce a full analysis report. Returns (text, tin, tout)."""
-    from datetime import timezone
+) -> tuple[dict, int, int]:
+    """
+    Call LLM to extract themes, overall sentiment, and per-response sentiment
+    for a single open-ended field. Returns (parsed_json, tin, tout).
+    """
+    template = _load_prompt("text_analytics")
+    answers: list[str] = field_data.get("answers", [])[:200]
+    description = field_data.get("description", "") or field_key
+    numbered = "\n".join(f"{i + 1}. {a}" for i, a in enumerate(answers))
+    prompt = template.format(
+        field_key=field_key,
+        field_description=description,
+        n=len(answers),
+        answers=numbered,
+    )
+    text, tin, tout = await call_llm(
+        prompt, model=model, provider=provider, temperature=0.2, json_mode=True
+    )
+    try:
+        parsed = parse_json_response(text)
+    except Exception:
+        parsed = {"themes": [], "sentiment": {"positive_pct": 0, "neutral_pct": 0, "negative_pct": 0}, "per_response_sentiment": []}
+    return parsed, tin, tout
 
-    template = _load_prompt("deep_dive")
 
-    drift_flagged = summary["drift_flagged_count"]
-    completed = summary["completed_tasks"]
-    drift_pct = round(drift_flagged / completed * 100, 1) if completed else 0.0
-    run_date = run.created_at.strftime("%Y-%m-%d") if run.created_at else "unknown"
+_ANALYSIS_TYPE_INSTRUCTIONS = {
+    "executive_summary": (
+        "Produce an executive summary of the key findings. "
+        "Identify the 3–5 most important insights, what they mean for the research objective, "
+        "and any notable patterns or surprises in the data."
+    ),
+    "segment_analysis": (
+        "Analyse differences between respondent segments. "
+        "Identify which groups (by role, seniority, company size, or other traits) responded differently "
+        "and what drives those differences. Highlight the most meaningful contrasts."
+    ),
+    "opportunity_map": (
+        "Map the unmet needs and adoption drivers that emerge from the responses. "
+        "What problems are respondents most motivated to solve? "
+        "Where is there strongest pull, and what would accelerate adoption?"
+    ),
+    "objection_analysis": (
+        "Focus on barriers, objections, and concerns. "
+        "What are the main reasons respondents would not adopt, pay, or engage? "
+        "Group objections by theme and assess their severity and frequency."
+    ),
+}
 
-    # Build a readable results summary block
+
+def _build_results_block(summary: dict) -> str:
     lines: list[str] = []
     for key, field in summary["fields"].items():
         ftype = field.get("type", "")
@@ -243,7 +280,6 @@ async def generate_deep_dive(
         desc = field.get("description") or key
         lines.append(f"\n### {desc} ({key})")
         lines.append(f"n={n} valid responses")
-
         if ftype in ("scale", "number", "integer", "float"):
             mean = field.get("mean")
             if mean is not None:
@@ -264,17 +300,79 @@ async def generate_deep_dive(
             dist = field.get("distribution", {})
             top = list(dist.items())[:5]
             lines.append(", ".join(f"{opt}: {v['pct']}%" for opt, v in top))
+    return "\n".join(lines)
 
-    results_block = "\n".join(lines)
 
-    prompt = template.format(
-        experiment_name=experiment_name,
-        sample_size=run.total_tasks,
-        completed=completed,
-        run_date=run_date,
-        drift_flagged=drift_flagged,
-        drift_pct=drift_pct,
-        results_summary=results_block,
+def _build_respondents_block(respondents: list[dict]) -> str:
+    parts: list[str] = []
+    for i, r in enumerate(respondents, 1):
+        traits_str = ", ".join(f"{k}: {v}" for k, v in r.get("traits", {}).items())
+        vars_str = ", ".join(f"{k}={v}" for k, v in r.get("injected_vars", {}).items())
+        extracted_str = ", ".join(f"{k}: {v}" for k, v in r.get("extracted_json", {}).items())
+        header = f"--- Respondent {i}"
+        if traits_str:
+            header += f" | Profile: {traits_str}"
+        if vars_str:
+            header += f" | Stimulus: {vars_str}"
+        if extracted_str:
+            header += f" | Extracted: {extracted_str}"
+        parts.append(header)
+        transcript = r.get("transcript", "").strip()
+        if transcript:
+            parts.append(transcript)
+        parts.append("")
+    return "\n".join(parts)
+
+
+async def generate_deep_dive(
+    run: Any,
+    summary: dict,
+    experiment_name: str,
+    model: str,
+    provider: str,
+    analysis_type: str = "executive_summary",
+    context_mode: str = "quick",
+    respondents: list[dict] | None = None,
+    custom_prompt: str = "",
+) -> tuple[str, int, int]:
+    """Call LLM to produce a full analysis report. Returns (text, tin, tout)."""
+    completed = summary["completed_tasks"]
+    drift_flagged = summary["drift_flagged_count"]
+    drift_pct = round(drift_flagged / completed * 100, 1) if completed else 0.0
+    run_date = run.created_at.strftime("%Y-%m-%d") if run.created_at else "unknown"
+
+    results_block = _build_results_block(summary)
+
+    # Determine task instruction
+    if analysis_type == "custom" and custom_prompt.strip():
+        task_instruction = custom_prompt.strip()
+    else:
+        task_instruction = _ANALYSIS_TYPE_INSTRUCTIONS.get(
+            analysis_type,
+            _ANALYSIS_TYPE_INSTRUCTIONS["executive_summary"]
+        )
+
+    # Build context section
+    context_section = ""
+    if context_mode in ("standard", "full") and respondents:
+        n_label = f"{len(respondents)} transcripts (full run)" if context_mode == "full" else f"{len(respondents)} sampled transcripts"
+        respondents_block = _build_respondents_block(respondents)
+        context_section = f"\n\n## RESPONDENT TRANSCRIPTS ({n_label})\n{respondents_block}"
+
+    prompt = (
+        f"You are a senior UX and market research analyst. "
+        f"You are analysing results from a synthetic persona simulation study.\n\n"
+        f"## STUDY OVERVIEW\n"
+        f"Experiment: {experiment_name}\n"
+        f"Run date: {run_date}\n"
+        f"Sample size: {run.total_tasks} personas | Completed: {completed} | "
+        f"Drift flagged: {drift_flagged} ({drift_pct}%)\n\n"
+        f"## AGGREGATE RESULTS\n{results_block}"
+        f"{context_section}\n\n"
+        f"## YOUR TASK\n{task_instruction}\n\n"
+        f"Write in clear, structured markdown with section headers. "
+        f"Be specific — reference actual numbers and quote respondents where available. "
+        f"Avoid generic filler. Focus on actionable insights."
     )
     return await call_llm(prompt, model=model, provider=provider, temperature=0.4)
 

@@ -242,6 +242,45 @@ async def get_task(run_id: str, task_id: str, db: AsyncSession = Depends(get_db)
     return task
 
 
+@router.get("/runs/{run_id}/respondents")
+async def list_respondents(run_id: str, db: AsyncSession = Depends(get_db)):
+    """Return all tasks enriched with persona traits and backstory — powers analysis tabs."""
+    run = await db.get(SimulationRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    tasks_result = await db.execute(
+        select(SimulationTask).where(SimulationTask.run_id == run_id)
+    )
+    tasks = tasks_result.scalars().all()
+
+    persona_ids = list({t.persona_id for t in tasks})
+    personas_result = await db.execute(
+        select(Persona).where(Persona.id.in_(persona_ids))
+    )
+    personas = {p.id: p for p in personas_result.scalars().all()}
+
+    return [
+        {
+            "task_id": task.id,
+            "persona_id": task.persona_id,
+            "persona_traits": personas[task.persona_id].traits_json if task.persona_id in personas else {},
+            "backstory": personas[task.persona_id].backstory if task.persona_id in personas else "",
+            "injected_vars": task.injected_vars or {},
+            "raw_transcript": task.raw_transcript or "",
+            "extracted_json": task.extracted_json or {},
+            "extraction_confidence": task.extraction_confidence or {},
+            "drift_flagged": task.drift_flagged or False,
+            "drift_scores": task.drift_scores or [],
+            "pass1_status": task.pass1_status,
+            "pass2_status": task.pass2_status,
+            "pass1_cost_usd": task.pass1_cost_usd or 0.0,
+            "pass2_cost_usd": task.pass2_cost_usd or 0.0,
+        }
+        for task in tasks
+    ]
+
+
 # ── Actions ───────────────────────────────────────────────────────────────────
 
 @router.post("/runs/{run_id}/retry-failed", status_code=202)

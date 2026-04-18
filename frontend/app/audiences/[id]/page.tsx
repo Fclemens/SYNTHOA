@@ -1226,8 +1226,8 @@ export default function AudienceDetailPage() {
       {/* Prompt Template Section */}
       {(() => {
         const varNames = new Set(variables.map(v => v.name))
-        const usedTokens = new Set([...promptTemplate.matchAll(/\{([^}]+)\}/g)].map(m => m[1].trim()).filter(t => varNames.has(t)))
-        const invalidTokens = [...promptTemplate.matchAll(/\{([^}]+)\}/g)].map(m => m[1].trim()).filter(t => !varNames.has(t))
+        const usedTokens = new Set(Array.from(promptTemplate.matchAll(/\{([^}]+)\}/g), m => m[1].trim()).filter(t => varNames.has(t)))
+        const invalidTokens = Array.from(promptTemplate.matchAll(/\{([^}]+)\}/g), m => m[1].trim()).filter(t => !varNames.has(t))
         const hasInvalid = invalidTokens.length > 0
 
         function insertAtCursor(name: string) {
