@@ -14,19 +14,22 @@ _OVERRIDE_FILE = Path(__file__).parent.parent / "settings_override.json"
 INHERITING_STEPS = ("backstory", "insights")
 
 # ── Token pricing per 1M tokens {model: {input: $, output: $}} ────────────────
-# Standard-tier list prices as of Oct 2026. OpenAI: GPT-5.5 / 5.5-pro from the
-# official model pages; GPT-5.6 and GPT-5.4 tiers from third-party price
-# trackers (consistent across sources). Anthropic: official model table.
+# Standard-tier list prices from the official model pages
+# (developers.openai.com/api/docs/models, Anthropic model table), Oct 2026.
+# gpt-5.6-sol is at its promotional price (announced through Nov 21, 2026).
 # Long-context surcharges (>272K input tokens on OpenAI) are not modelled.
 DEFAULT_MODEL_PRICING: dict[str, dict[str, float]] = {
-    "gpt-5.6-sol":       {"input": 5.00,  "output": 30.00},
+    "gpt-6-astra":       {"input": 10.00, "output": 50.00},
+    "gpt-6.1-sol":       {"input": 2.00,  "output": 10.00},
+    "gpt-6-luna":        {"input": 0.10,  "output": 0.50},
+    "gpt-5.6-sol":       {"input": 4.00,  "output": 20.00},
     "gpt-5.6-terra":     {"input": 2.00,  "output": 12.00},
     "gpt-5.6-luna":      {"input": 0.20,  "output": 1.20},
     "gpt-5.5":           {"input": 5.00,  "output": 30.00},
     "gpt-5.5-pro":       {"input": 30.00, "output": 180.00},
     "gpt-5.4":           {"input": 2.50,  "output": 15.00},
+    "gpt-5.4-pro":       {"input": 30.00, "output": 180.00},
     "gpt-5.4-mini":      {"input": 0.75,  "output": 4.50},
-    "gpt-5.4-nano":      {"input": 0.20,  "output": 1.25},
     "claude-fable-5-1":  {"input": 10.00, "output": 50.00},
     "claude-opus-5-5":   {"input": 4.00,  "output": 20.00},
     "claude-sonnet-5-5": {"input": 2.00,  "output": 10.00},
@@ -60,8 +63,8 @@ class Settings(BaseSettings):
     provider_insights: str = ""
 
     # ── Per-step model selection ──────────────────────────────────────────────
-    model_pass1: str = "gpt-5.4"          # Pass 1: respondent interview
-    model_pass2: str = "gpt-5.4-mini"     # Pass 2: dual extraction
+    model_pass1: str = "gpt-6.1-sol"      # Pass 1: respondent interview
+    model_pass2: str = "gpt-6-luna"       # Pass 2: dual extraction
     model_backstory: str = ""             # "" → inherit from model_pass2
     model_insights: str = ""              # "" → inherit from model_pass2
 

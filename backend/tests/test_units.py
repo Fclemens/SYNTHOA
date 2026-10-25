@@ -39,8 +39,9 @@ def test_experiment_sampler_supports_all_distributions():
 
 def test_pricing_overrides_merge_with_defaults():
     config._apply({"model_pricing": {"my-local-model": {"input": 0, "output": 0}}})
-    assert "gpt-5.4" in config.settings.model_pricing and "my-local-model" in config.settings.model_pricing
-    assert config.settings.model_pass1.startswith("gpt-5")
+    assert "gpt-6.1-sol" in config.settings.model_pricing and "my-local-model" in config.settings.model_pricing
+    assert config.settings.model_pass1 in config.settings.model_pricing
+    assert config.settings.model_pass2 in config.settings.model_pricing
 
 
 class _FakeCompletions:
@@ -62,19 +63,20 @@ class _FakeCompletions:
         return R()
 
 
-async def test_openai_drops_rejected_params_and_uses_completion_tokens(monkeypatch):
+@pytest.mark.parametrize("model", ["gpt-5.4", "gpt-6.1-sol"])
+async def test_openai_drops_rejected_params_and_uses_completion_tokens(monkeypatch, model):
     fake = _FakeCompletions(reject=["temperature"])
     client = type("Cl", (), {"chat": type("Ch", (), {"completions": fake})()})()
     monkeypatch.setattr(llm_client, "_get_openai_client", lambda provider: client)
     llm_client._unsupported.clear()
 
-    text, tin, tout = await llm_client.call_llm("hi", model="gpt-5.4", provider="openai", max_tokens=400)
+    text, tin, tout = await llm_client.call_llm("hi", model=model, provider="openai", max_tokens=400)
     assert (text, tin, tout) == ("ok", 3, 1)
     assert "max_tokens" not in fake.seen[0] and fake.seen[0]["max_completion_tokens"] >= 400
     assert fake.seen[0]["reasoning_effort"] == "none"
     assert "temperature" not in fake.seen[-1]
     # Remembered per model: the next call does not retry the rejected parameter.
-    await llm_client.call_llm("hi", model="gpt-5.4", provider="openai")
+    await llm_client.call_llm("hi", model=model, provider="openai")
     assert len(fake.seen) == 3
 
 

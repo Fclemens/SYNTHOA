@@ -195,7 +195,7 @@ export default function SettingsPage() {
                         value={modelVal}
                         onChange={e => set(step.modelKey as string, e.target.value)}
                         className={inputCls}
-                        placeholder={hasInherit ? 'leave blank to inherit' : 'e.g. gpt-4o'}
+                        placeholder={hasInherit ? 'leave blank to inherit' : 'e.g. gpt-6.1-sol'}
                         autoComplete="off"
                       />
                     </div>

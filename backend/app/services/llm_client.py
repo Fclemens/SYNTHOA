@@ -178,7 +178,8 @@ def _get_anthropic_client():
 # ── OpenAI-compatible backend (openai + lmstudio) ────────────────────────────
 
 def _is_openai_reasoning_model(model: str) -> bool:
-    return model.startswith(("gpt-5", "o1", "o3", "o4"))
+    """Everything after the GPT-4 generation (GPT-5.x, GPT-6.x, o-series) reasons."""
+    return not model.startswith(("gpt-4", "gpt-3", "chatgpt-4o"))
 
 
 async def _call_openai(

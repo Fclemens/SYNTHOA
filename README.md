@@ -30,7 +30,7 @@ cd frontend && npm install && npm run dev
 Each pipeline step (Pass 1 interview, Pass 2 extraction, backstories,
 insights) has its own provider and model, set on the Settings page:
 
-- `openai`: OpenAI API (defaults: `gpt-5.4` for interviews, `gpt-5.4-mini` for extraction)
+- `openai`: OpenAI API (defaults: `gpt-6.1-sol` for interviews, `gpt-6-luna` for extraction)
 - `anthropic`: Claude API (`claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`, …)
 - `lmstudio`: any OpenAI-compatible local server (LM Studio, Ollama, vLLM)
 
