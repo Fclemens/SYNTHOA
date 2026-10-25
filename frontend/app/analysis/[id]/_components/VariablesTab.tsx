@@ -56,18 +56,18 @@ export function VariablesTab({ respondents, varKeys, fieldKeys, schemaFields }: 
 
   return (
     <div>
-      <div className="mb-5 flex items-center gap-4 rounded-xl border border-gray-200 bg-white px-5 py-3 flex-wrap">
+      <div className="mb-5 flex items-center gap-4 glass rounded-[14px] px-5 py-3 flex-wrap">
         <div className="flex items-center gap-2">
           <label className="text-xs font-medium text-gray-600">Stimulus variable</label>
           <select value={selectedVar} onChange={e => setSelectedVar(e.target.value)}
-            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none bg-white">
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none bg-panel-strong">
             {varKeys.map(k => <option key={k} value={k}>{'{' + k + '}'}</option>)}
           </select>
         </div>
         <div className="flex items-center gap-2">
           <label className="text-xs font-medium text-gray-600">Output field</label>
           <select value={selectedField} onChange={e => setSelectedField(e.target.value)}
-            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none bg-white">
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none bg-panel-strong">
             {schemaFields.map(f => <option key={f.key} value={f.key}>{f.description || f.key}</option>)}
           </select>
         </div>
@@ -85,7 +85,7 @@ export function VariablesTab({ respondents, varKeys, fieldKeys, schemaFields }: 
         {groupEntries.map(([val, group]) => {
           const values = group.map(r => r.extracted_json[selectedField]).filter(v => v !== undefined && v !== null)
           return (
-            <div key={val} className="rounded-xl border border-gray-200 bg-white p-4">
+            <div key={val} className="glass rounded-[14px] p-4">
               <div className="flex items-center justify-between mb-3">
                 <div>
                   <span className="text-xs font-medium text-gray-500 font-mono">{'{' + selectedVar + '}'} =</span>
@@ -101,7 +101,7 @@ export function VariablesTab({ respondents, varKeys, fieldKeys, schemaFields }: 
 
       {/* Comparison table for numeric fields */}
       {isNumericField && groupEntries.length > 1 && (
-        <div className="mt-5 rounded-xl border border-gray-200 bg-white overflow-hidden">
+        <div className="mt-5 glass rounded-[14px] overflow-hidden">
           <div className="px-5 py-3 border-b border-gray-100 bg-gray-50 flex items-center gap-3">
             <h3 className="text-sm font-medium text-gray-700">Mean comparison — {fieldMeta?.description || selectedField}</h3>
             {overallP !== null && (

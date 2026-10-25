@@ -1,8 +1,9 @@
 'use client'
 import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { api, Audience, Experiment, ExperimentProtocolBundle } from '@/lib/api'
-import { fmtDate } from '@/lib/utils'
+import { api, Audience, Experiment, ExperimentProtocolBundle, SimulationRun } from '@/lib/api'
+import { OverflowMenu } from '@/components/ui/OverflowMenu'
+import { fmtDate, fmtDateTime, runLabel, runStatusLabel } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
@@ -16,6 +17,7 @@ export default function ExperimentsPage() {
 
   const [experiments, setExperiments] = useState<Experiment[]>([])
   const [audiences, setAudiences] = useState<Audience[]>([])
+  const [latestRun, setLatestRun] = useState<Record<string, SimulationRun>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -45,12 +47,16 @@ export default function ExperimentsPage() {
     try {
       setLoading(true)
       setError(null)
-      const [exps, auds] = await Promise.all([
+      const [exps, auds, runs] = await Promise.all([
         api.listExperiments(),
         api.listAudiences(),
+        api.listRuns(undefined, 200),
       ])
       setExperiments(exps)
       setAudiences(auds)
+      const latest: Record<string, SimulationRun> = {}
+      for (const r of runs) if (!latest[r.experiment_id]) latest[r.experiment_id] = r   // newest first
+      setLatestRun(latest)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load experiments')
     } finally {
@@ -149,7 +155,7 @@ export default function ExperimentsPage() {
   }
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-6">
       {/* Header */}
       <div className="mb-8 flex items-center justify-between">
         <div>
@@ -186,7 +192,7 @@ export default function ExperimentsPage() {
       )}
 
       {!loading && !error && experiments.length === 0 && (
-        <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-200 bg-white py-16 text-center">
+        <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-200 bg-panel-strong py-16 text-center">
           <p className="text-gray-500">No experiments yet. Create one to start simulating surveys.</p>
           <Button className="mt-4" onClick={() => setModalOpen(true)}>Create your first experiment</Button>
         </div>
@@ -205,26 +211,10 @@ export default function ExperimentsPage() {
                   <h2 className="font-semibold text-gray-900 leading-tight">{exp.name}</h2>
                   <div className="flex items-center gap-1 shrink-0">
                     <Badge color={modeColor(exp.execution_mode)}>{exp.execution_mode}</Badge>
-                    {/* Export */}
-                    <button
-                      onClick={e => { e.stopPropagation(); handleExport(exp) }}
-                      className="text-gray-300 hover:text-indigo-500 transition-colors"
-                      title="Export protocol as JSON"
-                    >
-                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                      </svg>
-                    </button>
-                    {/* Delete */}
-                    <button
-                      onClick={e => { e.stopPropagation(); setDeleteTarget(exp) }}
-                      className="text-gray-300 hover:text-red-500 transition-colors"
-                      title="Delete experiment"
-                    >
-                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </button>
+                    <OverflowMenu items={[
+                      { label: 'Export protocol (JSON)', onClick: () => handleExport(exp) },
+                      { label: 'Delete experiment…', onClick: () => setDeleteTarget(exp), danger: true },
+                    ]} />
                   </div>
                 </div>
                 <p className="mt-1 text-xs text-gray-500">
@@ -238,7 +228,11 @@ export default function ExperimentsPage() {
                     <Badge color="yellow">{exp.dist_variables.length} var{exp.dist_variables.length !== 1 ? 's' : ''}</Badge>
                   )}
                 </div>
-                <p className="mt-3 text-xs text-gray-400">Created {fmtDate(exp.created_at)}</p>
+                <p className="mt-3 border-t border-gray-100 pt-2 text-xs text-gray-500">
+                  {latestRun[exp.id]
+                    ? <>Last run: {runLabel(latestRun[exp.id])} · {runStatusLabel(latestRun[exp.id].status)} · {latestRun[exp.id].completed_tasks}/{latestRun[exp.id].total_tasks} · {fmtDateTime(latestRun[exp.id].created_at)}</>
+                    : <>No runs yet · created {fmtDate(exp.created_at)}</>}
+                </p>
               </CardBody>
             </Card>
           ))}

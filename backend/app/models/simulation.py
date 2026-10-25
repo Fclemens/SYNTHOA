@@ -15,6 +15,8 @@ class SimulationRun(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     experiment_id: Mapped[str] = mapped_column(String, ForeignKey("experiments.id", ondelete="CASCADE"), nullable=False)
+    run_number: Mapped[int | None] = mapped_column(Integer)    # 1, 2, 3… within the experiment
+    name: Mapped[str | None] = mapped_column(String)           # optional label set by the user
     model_pass1: Mapped[str] = mapped_column(String, nullable=False)
     model_pass2: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
@@ -29,6 +31,14 @@ class SimulationRun(Base):
     analysis_cache: Mapped[dict | None] = mapped_column(JSON)
 
     experiment: Mapped["Experiment"] = relationship(back_populates="runs")  # type: ignore[name-defined]
+
+    @property
+    def execution_mode(self) -> str:
+        return (self.locked_config or {}).get("execution_mode", "pooled")
+
+    @property
+    def dual_extraction(self) -> bool:
+        return (self.locked_config or {}).get("dual_extraction", True)
     tasks: Mapped[list["SimulationTask"]] = relationship(
         back_populates="run", cascade="all, delete-orphan"
     )

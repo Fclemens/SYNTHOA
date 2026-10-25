@@ -10,11 +10,11 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variants: Record<Variant, string> = {
-  primary:   'bg-indigo-600 text-white hover:bg-indigo-700 disabled:bg-indigo-400',
-  secondary: 'bg-gray-100 text-gray-800 hover:bg-gray-200 disabled:bg-gray-100 disabled:text-gray-400',
-  danger:    'bg-red-600 text-white hover:bg-red-700 disabled:bg-red-400',
-  ghost:     'text-gray-600 hover:bg-gray-100 disabled:text-gray-400',
-  outline:   'border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:text-gray-400',
+  primary:   'bg-accent text-white shadow-glow hover:shadow-glow-lg hover:brightness-110 border border-transparent',
+  secondary: 'border border-gray-300 bg-white/[0.04] text-gray-900 hover:border-indigo-300 hover:bg-indigo-100',
+  danger:    'border border-red-300 bg-red-100 text-red-700 hover:bg-red-200',
+  ghost:     'border border-transparent text-gray-600 hover:bg-gray-100 hover:text-gray-900',
+  outline:   'border border-gray-300 bg-transparent text-gray-900 hover:border-indigo-300 hover:bg-indigo-100',
 }
 
 const sizes: Record<Size, string> = {
@@ -28,7 +28,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     <button
       ref={ref}
       disabled={disabled || loading}
-      className={`inline-flex items-center gap-2 rounded-lg font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 disabled:cursor-not-allowed ${variants[variant]} ${sizes[size]} ${className}`}
+      className={`inline-flex items-center gap-2 rounded-lg font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 disabled:cursor-not-allowed disabled:opacity-40 ${variants[variant]} ${sizes[size]} ${className}`}
       {...props}
     >
       {loading && (

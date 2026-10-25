@@ -1,6 +1,6 @@
-# GenAI Customer Simulator
+# Synthoa
 
-Synthetic survey research with LLMs: define an **audience** (a statistical
+*by fclementi*. Synthetic customer research with LLMs: define an **audience** (a statistical
 population of personas), write an **experiment** (questions + variables), run
 it as simulated interviews, and analyse the extracted answers.
 

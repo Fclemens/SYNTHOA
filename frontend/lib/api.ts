@@ -145,6 +145,8 @@ export const hasResults = (status: string) => status === 'completed' || status =
 
 export interface SimulationRun {
   id: string; experiment_id: string; model_pass1: string; model_pass2: string;
+  experiment_name?: string | null; run_number?: number | null; name?: string | null;
+  execution_mode: 'pooled' | 'dedicated'; dual_extraction: boolean;
   status: RunStatus; total_tasks: number; completed_tasks: number;
   failed_tasks: number; total_cost_usd: number;
   created_at: string; completed_at?: string;
@@ -156,6 +158,7 @@ export interface SimulationTaskSummary {
   pass1_error?: string; pass2_error?: string;
 }
 export interface SimulationTaskDetail extends SimulationTaskSummary {
+  persona_traits: Record<string, unknown>; persona_backstory?: string | null;
   pass1_prompt?: string; raw_transcript?: string;
   pass1_tokens_in?: number; pass1_tokens_out?: number;
   drift_scores?: number[];
@@ -279,6 +282,20 @@ export interface Respondent {
   pass2_cost_usd: number;
 }
 
+export interface PanelCheckCategory { label: string; target: number; actual: number }
+export interface PanelCheckBin { lo: number; hi: number; target: number; actual: number }
+export interface PanelCheckVariable {
+  id: string; name: string; var_type: string; has_rules: boolean;
+  kind: 'categorical' | 'numeric';
+  categories?: PanelCheckCategory[]; max_gap?: number;
+  bins?: PanelCheckBin[]; target_mean?: number; target_std?: number; actual_mean?: number | null; actual_std?: number | null;
+}
+export interface PanelCheck {
+  n_personas: number
+  variables: PanelCheckVariable[]
+  correlations: { var_a: string; var_b: string; target: number; actual: number | null }[]
+}
+
 export interface ModelPricing { input: number; output: number }
 
 export interface AppSettings {
@@ -351,6 +368,7 @@ export const api = {
     req<SamplingJob>("POST", `/api/audiences/${audienceId}/sampling-jobs/${jobId}/resume`),
   cancelSamplingJob: (audienceId: string, jobId: string) =>
     req<SamplingJob>("POST", `/api/audiences/${audienceId}/sampling-jobs/${jobId}/cancel`),
+  panelCheck: (audienceId: string) => req<PanelCheck>("GET", `/api/audiences/${audienceId}/panel-check`),
   listPersonas: (audienceId: string) =>
     req<Persona[]>("GET", `/api/audiences/${audienceId}/personas`),
   deletePersona: (audienceId: string, personaId: string) =>
@@ -412,6 +430,7 @@ export const api = {
   launchRun: (expId: string, body: { population_size: number; model_pass1?: string; model_pass2?: string; dual_extraction?: boolean; sample_fresh?: boolean; persona_ids?: string[] }) =>
     req<SimulationRun>("POST", `/api/experiments/${expId}/launch`, body),
   getRun: (runId: string) => req<SimulationRun>("GET", `/api/runs/${runId}`),
+  renameRun: (runId: string, name: string) => req<SimulationRun>("PATCH", `/api/runs/${runId}`, { name }),
   getRunProgress: (runId: string) =>
     req<{ p1_running: number; p1_done: number; p2_running: number; p2_done: number; failed: number; total: number }>("GET", `/api/runs/${runId}/progress`),
   listTasks: (runId: string, offset = 0, limit = 50) =>
@@ -450,5 +469,9 @@ export const api = {
   // Settings
   getSettings: () => req<AppSettings>('GET', '/api/settings'),
   updateSettings: (body: Partial<AppSettings>) => req<AppSettings>('PUT', '/api/settings', body),
+  testProvider: (provider: string, model: string) =>
+    req<{ ok: boolean; latency_ms?: number; reply?: string; error?: string }>('POST', '/api/settings/test-provider', { provider, model }),
+  providerModels: (provider: string) =>
+    req<{ models: string[]; error?: string }>('GET', `/api/settings/provider-models?provider=${provider}`),
 
 };

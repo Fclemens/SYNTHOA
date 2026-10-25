@@ -1,19 +1,15 @@
 'use client'
 import { useEffect, useState } from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { api, AppSettings, Experiment, isRunActive, PreflightReport, SimulationRun } from '@/lib/api'
-import { usePolling } from '@/lib/usePolling'
-import { fmtCost, fmtTokens, fmtDateTime, hasPricing, runStatusColor, runStatusLabel, pct } from '@/lib/utils'
+import { api, AppSettings, Experiment, PreflightReport } from '@/lib/api'
+import { fmtCost, fmtTokens, hasPricing } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
-import { Badge } from '@/components/ui/Badge'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
-import { ProgressBar } from '@/components/ui/ProgressBar'
 import { useToast } from '@/components/ui/Toast'
 import { PreviewInterviewModal } from './PreviewInterviewModal'
-
-const selectCls = 'mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white'
+import { ModelPicker } from '@/components/ModelPicker'
+import { tokenReport } from './tokens'
 
 interface CheckItem { ok: boolean; label: string; hint?: string; warnOnly?: boolean }
 
@@ -45,7 +41,6 @@ export function LaunchTab({ experiment, onGoTo }: { experiment: Experiment; onGo
 
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [panelSize, setPanelSize] = useState<number | null>(null)
-  const [runs, setRuns] = useState<SimulationRun[]>([])
   const [form, setForm] = useState({
     population_size: 10,
     model_pass1: '',
@@ -69,16 +64,8 @@ export function LaunchTab({ experiment, onGoTo }: { experiment: Experiment; onGo
     api.getAudience(experiment.audience_id).then(a => setPanelSize(a.persona_count ?? 0)).catch(() => setPanelSize(null))
   }, [experiment.audience_id])
 
-  const kickRuns = usePolling(async () => {
-    const data = await api.listRuns(experiment.id)
-    setRuns(data)
-    return data.some(r => isRunActive(r.status))
-  }, { intervalMs: 3000, immediate: true }, experiment.id)
 
-  const modelOptions = (current: string) => {
-    const priced = Object.keys(settings?.model_pricing ?? {}).filter(k => k !== 'default')
-    return current && !priced.includes(current) ? [current, ...priced] : priced
-  }
+  const modelOptions = (_current: string) => Object.keys(settings?.model_pricing ?? {}).filter(k => k !== 'default')
 
   // ── Readiness ──────────────────────────────────────────────────────────────
   const nQuestions = experiment.questions?.length ?? 0
@@ -88,6 +75,7 @@ export function LaunchTab({ experiment, onGoTo }: { experiment: Experiment; onGo
   const keyMissing = settings ? [settings.provider_pass1, settings.provider_pass2].some(p =>
     (p === 'openai' && !settings.openai_api_key_set) || (p === 'anthropic' && !settings.anthropic_api_key_set)) : false
 
+  const unknownTokens = tokenReport(experiment).unknown
   const checks: CheckItem[] = [
     { ok: nQuestions > 0, label: nQuestions > 0 ? `${nQuestions} question${nQuestions !== 1 ? 's' : ''}` : 'No questions yet',
       hint: 'Add at least one question in the Questions tab.' },
@@ -100,6 +88,11 @@ export function LaunchTab({ experiment, onGoTo }: { experiment: Experiment; onGo
       hint: 'Costs for these models will show as $0. Add their prices in Settings → Token Pricing.' },
     { ok: !keyMissing, label: keyMissing ? 'API key missing' : 'API keys configured',
       hint: 'Add the key for the selected provider in Settings.' },
+    ...(unknownTokens.length ? [{
+      ok: false, warnOnly: true,
+      label: `Undefined variable${unknownTokens.length > 1 ? 's' : ''}: ${Array.from(new Set(unknownTokens.map(u => `{${u.token}}`))).join(', ')}`,
+      hint: 'These would reach the model as literal text. Define them in the Variables tab or fix the spelling.',
+    }] : []),
   ]
   const blocked = nQuestions === 0 || keyMissing
 
@@ -145,7 +138,6 @@ export function LaunchTab({ experiment, onGoTo }: { experiment: Experiment; onGo
         sample_fresh: form.sample_fresh,
       })
       toast('Simulation launched', 'success')
-      kickRuns()
       router.push(`/runs/${run.id}`)
     } catch (e: unknown) {
       toast(e instanceof Error ? e.message : 'Launch failed', 'error')
@@ -204,16 +196,12 @@ export function LaunchTab({ experiment, onGoTo }: { experiment: Experiment; onGo
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className="block text-sm font-medium text-gray-700">Model Pass 1 (interview)</label>
-              <select value={form.model_pass1} onChange={e => setForm(f => ({ ...f, model_pass1: e.target.value }))} className={selectCls}>
-                {modelOptions(form.model_pass1).map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
+              <ModelPicker value={form.model_pass1} onChange={v => setForm(f => ({ ...f, model_pass1: v }))} options={modelOptions(form.model_pass1)} />
               <p className="mt-0.5 text-xs text-gray-400">Default: {settings?.model_pass1 ?? '…'} · {settings?.provider_pass1}</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700">Model Pass 2 (extraction)</label>
-              <select value={form.model_pass2} onChange={e => setForm(f => ({ ...f, model_pass2: e.target.value }))} className={selectCls}>
-                {modelOptions(form.model_pass2).map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
+              <ModelPicker value={form.model_pass2} onChange={v => setForm(f => ({ ...f, model_pass2: v }))} options={modelOptions(form.model_pass2)} />
               <p className="mt-0.5 text-xs text-gray-400">Default: {settings?.model_pass2 ?? '…'} · {settings?.provider_pass2}</p>
             </div>
           </div>
@@ -288,65 +276,6 @@ export function LaunchTab({ experiment, onGoTo }: { experiment: Experiment; onGo
           Launch Simulation
         </Button>
       </div>
-
-      {/* Past Runs */}
-      {runs.length > 0 && (
-        <div>
-          <h2 className="text-lg font-semibold text-gray-800 mb-3">
-            Past Runs
-            <span className="ml-2 text-sm font-normal text-gray-500">({runs.length})</span>
-          </h2>
-          <Card>
-            <div className="divide-y divide-gray-100">
-              {runs.map(run => {
-                const active = isRunActive(run.status)
-                const canExport = run.completed_tasks > 0
-                return (
-                  <div key={run.id} className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors">
-                    <Link href={`/runs/${run.id}`} className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-mono text-xs text-gray-400">{run.id.slice(0, 8)}…</span>
-                        <Badge color={runStatusColor(run.status)}>{runStatusLabel(run.status)}</Badge>
-                        {run.failed_tasks > 0 && <Badge color="red">{run.failed_tasks} failed</Badge>}
-                      </div>
-                      {active ? (
-                        <ProgressBar value={pct(run.completed_tasks, run.total_tasks)} color="indigo" size="sm" />
-                      ) : (
-                        <p className="text-xs text-gray-500">
-                          {run.completed_tasks}/{run.total_tasks} tasks · {run.model_pass1} · {fmtCost(run.total_cost_usd)} · {fmtDateTime(run.created_at)}
-                        </p>
-                      )}
-                    </Link>
-                    {canExport && (
-                      <div className="flex gap-1 shrink-0">
-                        <button
-                          onClick={() => window.open(api.exportRun(run.id, 'csv'), '_blank')}
-                          className="rounded px-2 py-1 text-xs text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors font-medium"
-                          title="Export CSV"
-                        >
-                          CSV
-                        </button>
-                        <button
-                          onClick={() => window.open(api.exportRun(run.id, 'xlsx'), '_blank')}
-                          className="rounded px-2 py-1 text-xs text-gray-500 hover:text-green-600 hover:bg-green-50 transition-colors font-medium"
-                          title="Export Excel"
-                        >
-                          XLSX
-                        </button>
-                      </div>
-                    )}
-                    <Link href={`/runs/${run.id}`}>
-                      <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                      </svg>
-                    </Link>
-                  </div>
-                )
-              })}
-            </div>
-          </Card>
-        </div>
-      )}
 
       <ConfirmDialog
         open={confirmOpen}

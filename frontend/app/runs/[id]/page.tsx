@@ -4,17 +4,25 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { api, hasResults, isRunActive, SimulationRun, SimulationTaskSummary, SimulationTaskDetail } from '@/lib/api'
 import { usePolling } from '@/lib/usePolling'
-import { fmtDateTime, fmtCost, fmtTokens, runStatusColor, runStatusLabel, taskStatusColor, pct } from '@/lib/utils'
+import { fmtDateTime, fmtCost, fmtTokens, runDetails, runLabel, runStatusColor, runStatusLabel, taskStatusColor, pct } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Modal } from '@/components/ui/Modal'
+import { Breadcrumbs } from '@/components/ui/Breadcrumbs'
+import { InlineEdit } from '@/components/ui/InlineEdit'
+import { OverflowMenu } from '@/components/ui/OverflowMenu'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { ProgressBar } from '@/components/ui/ProgressBar'
 import { useToast } from '@/components/ui/Toast'
 
 const POLL_INTERVAL = 3000
+
+/** Pass 2 never starts when the interview failed or was cancelled — say so instead of "pending". */
+function pass2Shown(t: { pass1_status: string; pass2_status: string }): string {
+  return t.pass2_status === 'pending' && (t.pass1_status === 'failed' || t.pass1_status === 'cancelled') ? 'skipped' : t.pass2_status
+}
 
 export default function RunDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -85,6 +93,14 @@ export default function RunDetailPage() {
     setTaskDetail(null)
   }
 
+  async function handleRename(name: string) {
+    try {
+      setRun(await api.renameRun(id, name))
+    } catch (e: unknown) {
+      toast(e instanceof Error ? e.message : 'Rename failed', 'error')
+    }
+  }
+
   async function handleRetryFailed() {
     try {
       setRetrying(true)
@@ -145,7 +161,7 @@ export default function RunDetailPage() {
 
   if (error && !run) {
     return (
-      <div className="mx-auto max-w-5xl px-4 py-8">
+      <div className="py-8">
         <div className="rounded-lg bg-red-50 p-4 text-sm text-red-700">
           {error}
           <button className="ml-2 underline" onClick={() => loadData()}>Retry</button>
@@ -169,38 +185,35 @@ export default function RunDetailPage() {
       : run.status === 'completed_with_errors' ? 'yellow' : 'indigo'
 
   return (
-    <div className="space-y-6 max-w-4xl">
-        {/* Back link */}
-        <Link href={`/experiments/${run.experiment_id}?tab=launch`} className="inline-flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-800 mb-6">
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-          Back to Experiment
-        </Link>
+    <div className="space-y-6">
+        <Breadcrumbs items={[
+          { label: 'Experiments', href: '/experiments' },
+          { label: run.experiment_name ?? 'Experiment', href: `/experiments/${run.experiment_id}` },
+          { label: runLabel(run) },
+        ]} />
 
         {/* Header */}
-        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
             <div className="flex items-center gap-3">
-              <h1 className="text-xl font-bold text-gray-900 font-mono">
-                Run {run.id.slice(0, 8)}…
-              </h1>
+              <InlineEdit
+                value={run.name ?? ''}
+                placeholder={run.run_number ? `Run #${run.run_number}` : 'Untitled run'}
+                onSave={handleRename}
+                className="text-2xl font-bold text-gray-900"
+              />
               <Badge color={runStatusColor(run.status)}>{runStatusLabel(run.status)}</Badge>
             </div>
             <p className="mt-1 text-sm text-gray-500">
-              Experiment:{' '}
-              <Link href={`/experiments/${run.experiment_id}`} className="text-indigo-600 hover:underline">
-                {run.experiment_id.slice(0, 8)}…
-              </Link>
+              {run.name && run.run_number ? `Run #${run.run_number} · ` : ''}{runDetails(run)} · {fmtDateTime(run.created_at)}
             </p>
-            <p className="text-xs text-gray-400 mt-1">{fmtDateTime(run.created_at)}</p>
           </div>
 
           {/* Actions */}
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {run.failed_tasks > 0 && !isRunActive(run.status) && (
               <Button size="sm" variant="outline" loading={retrying} onClick={handleRetryFailed}>
-                Retry Failed ({run.failed_tasks})
+                Retry failed ({run.failed_tasks})
               </Button>
             )}
             {isRunActive(run.status) && (
@@ -213,22 +226,20 @@ export default function RunDetailPage() {
                 Resume
               </Button>
             )}
-            {!isRunActive(run.status) && tasks.some(t => t.pass1_status === 'completed') && (
-              <Button size="sm" variant="outline" loading={reExtracting} onClick={handleReExtract}>
-                Re-extract
-              </Button>
+            {run.completed_tasks > 0 && (
+              <Link href={`/analysis/${id}`}><Button size="sm">View results</Button></Link>
             )}
-            <Button size="sm" variant="secondary" onClick={() => window.open(api.exportRun(id, 'csv'), '_blank')}>
-              Export CSV
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => window.open(api.exportRun(id, 'xlsx'), '_blank')}>
-              Export XLSX
-            </Button>
+            <OverflowMenu items={[
+              { label: 'Export CSV', onClick: () => window.open(api.exportRun(id, 'csv'), '_blank') },
+              { label: 'Export Excel', onClick: () => window.open(api.exportRun(id, 'xlsx'), '_blank') },
+              { label: reExtracting ? 'Re-extracting…' : 'Re-extract with latest schema', onClick: handleReExtract,
+                disabled: isRunActive(run.status) || !tasks.some(t => t.pass1_status === 'completed') || reExtracting },
+            ]} />
           </div>
         </div>
 
         {/* Progress */}
-        <Card className="mb-6">
+        <Card>
           <CardBody>
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-4">
@@ -311,7 +322,7 @@ export default function RunDetailPage() {
                             <Badge color={taskStatusColor(task.pass1_status)}>{task.pass1_status}</Badge>
                           </td>
                           <td className="px-4 py-3">
-                            <Badge color={taskStatusColor(task.pass2_status)}>{task.pass2_status}</Badge>
+                            <Badge color={taskStatusColor(pass2Shown(task))}>{pass2Shown(task)}</Badge>
                           </td>
                           <td className="px-4 py-3">
                             {task.drift_flagged ? (
@@ -331,10 +342,6 @@ export default function RunDetailPage() {
           </Card>
         </div>
 
-        {/* Results Summary — shown when run is completed and tasks have extracted data */}
-        {hasResults(run.status) && tasks.length > 0 && (
-          <ResultsSummary runId={id} tasks={tasks} />
-        )}
 
       <ConfirmDialog
         open={confirmCancel}
@@ -375,11 +382,12 @@ export default function RunDetailPage() {
 // ── Task Detail Content ───────────────────────────────────────────────────────
 
 function TaskDetailContent({ detail }: { detail: SimulationTaskDetail }) {
-  const [activeSection, setActiveSection] = useState<'prompt' | 'transcript' | 'extracted'>('extracted')
+  const [activeSection, setActiveSection] = useState<'prompt' | 'transcript' | 'extracted' | 'persona'>('extracted')
 
   const sections = [
-    { key: 'extracted' as const, label: 'Extracted JSON' },
+    { key: 'extracted' as const, label: 'Extracted answers' },
     { key: 'transcript' as const, label: 'Transcript' },
+    { key: 'persona' as const, label: 'Persona' },
     { key: 'prompt' as const, label: 'Prompt' },
   ]
 
@@ -390,7 +398,7 @@ function TaskDetailContent({ detail }: { detail: SimulationTaskDetail }) {
       {/* Status badges */}
       <div className="flex flex-wrap gap-2">
         <Badge color={taskStatusColor(detail.pass1_status)}>P1: {detail.pass1_status}</Badge>
-        <Badge color={taskStatusColor(detail.pass2_status)}>P2: {detail.pass2_status}</Badge>
+        <Badge color={taskStatusColor(pass2Shown(detail))}>P2: {pass2Shown(detail)}</Badge>
         {detail.drift_flagged && <Badge color="yellow">Drift Flagged</Badge>}
         <span className="text-xs text-gray-500 self-center">Cost: {fmtCost(totalCost)}</span>
         {detail.pass1_tokens_in != null && (
@@ -422,9 +430,16 @@ function TaskDetailContent({ detail }: { detail: SimulationTaskDetail }) {
         <div className="space-y-3">
           {detail.extracted_json ? (
             <>
-              <pre className="rounded-lg bg-gray-900 p-4 text-xs text-green-400 overflow-auto max-h-64">
-                {JSON.stringify(detail.extracted_json, null, 2)}
-              </pre>
+              <table className="w-full text-sm">
+                <tbody className="divide-y divide-gray-100">
+                  {Object.entries(detail.extracted_json).map(([k, v]) => (
+                    <tr key={k}>
+                      <td className="py-1.5 pr-4 font-mono text-xs text-indigo-700">{k}</td>
+                      <td className="py-1.5 text-gray-800">{typeof v === 'object' ? JSON.stringify(v) : String(v)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
               {detail.extraction_confidence && Object.keys(detail.extraction_confidence).length > 0 && (
                 <div>
                   <h4 className="text-xs font-medium text-gray-600 mb-2">Confidence Scores</h4>
@@ -457,6 +472,24 @@ function TaskDetailContent({ detail }: { detail: SimulationTaskDetail }) {
         )
       )}
 
+      {activeSection === 'persona' && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-1.5">
+            {Object.entries(detail.persona_traits ?? {}).map(([k, v]) => (
+              <span key={k} className="rounded bg-indigo-50 px-2 py-0.5 text-xs text-indigo-800">{k}: {String(v)}</span>
+            ))}
+          </div>
+          {Object.keys(detail.injected_vars ?? {}).length > 0 && (
+            <p className="text-xs text-gray-500">
+              Variables: {Object.entries(detail.injected_vars).map(([k, v]) => `${k} = ${String(v)}`).join(', ')}
+            </p>
+          )}
+          {detail.persona_backstory && (
+            <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-lg bg-gray-50 p-4 text-xs text-gray-700">{detail.persona_backstory}</pre>
+          )}
+        </div>
+      )}
+
       {activeSection === 'prompt' && (
         detail.pass1_prompt ? (
           <pre className="rounded-lg bg-gray-50 p-4 text-xs text-gray-700 whitespace-pre-wrap overflow-auto max-h-96">
@@ -473,118 +506,6 @@ function TaskDetailContent({ detail }: { detail: SimulationTaskDetail }) {
           {detail.pass1_error && <p className="text-xs text-red-700"><span className="font-medium">P1 Error:</span> {detail.pass1_error}</p>}
           {detail.pass2_error && <p className="text-xs text-red-700"><span className="font-medium">P2 Error:</span> {detail.pass2_error}</p>}
         </div>
-      )}
-    </div>
-  )
-}
-
-// ── Results Summary ───────────────────────────────────────────────────────────
-
-function ResultsSummary({ runId, tasks }: { runId: string; tasks: SimulationTaskSummary[] }) {
-  const { toast } = useToast()
-  const [details, setDetails] = useState<SimulationTaskDetail[]>([])
-  const [loading, setLoading] = useState(false)
-  const [loaded, setLoaded] = useState(false)
-
-  async function loadDetails() {
-    setLoading(true)
-    try {
-      // Load up to 50 task details in parallel (batched)
-      const completedIds = tasks
-        .filter(t => t.pass1_status === 'completed')
-        .slice(0, 50)
-        .map(t => t.id)
-
-      const detailResults = await Promise.allSettled(
-        completedIds.map(tid => api.getTask(runId, tid))
-      )
-      const loaded = detailResults
-        .filter((r): r is PromiseFulfilledResult<SimulationTaskDetail> => r.status === 'fulfilled')
-        .map(r => r.value)
-        .filter(d => d.extracted_json != null)
-
-      setDetails(loaded)
-      setLoaded(true)
-    } catch (e: unknown) {
-      toast(e instanceof Error ? e.message : 'Failed to load results', 'error')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // Get all unique schema keys across task details
-  const schemaKeys = Array.from(
-    new Set(details.flatMap(d => Object.keys(d.extracted_json ?? {})))
-  )
-
-  return (
-    <div className="mb-6">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-lg font-semibold text-gray-800">Results Summary</h2>
-        {!loaded && (
-          <Button size="sm" variant="outline" loading={loading} onClick={loadDetails}>
-            Load Results
-          </Button>
-        )}
-      </div>
-
-      {!loaded ? (
-        <Card>
-          <CardBody>
-            <p className="text-sm text-gray-500 text-center py-4">
-              Click &ldquo;Load Results&rdquo; to view extracted data across all completed tasks.
-            </p>
-          </CardBody>
-        </Card>
-      ) : details.length === 0 ? (
-        <Card>
-          <CardBody>
-            <p className="text-sm text-gray-400 text-center py-4">No extracted results available.</p>
-          </CardBody>
-        </Card>
-      ) : (
-        <Card>
-          <CardHeader>
-            <span className="text-sm text-gray-500">{details.length} tasks with extracted data</span>
-          </CardHeader>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-gray-100 bg-gray-50">
-                  <th className="px-3 py-2.5 text-left font-medium text-gray-600 sticky left-0 bg-gray-50">Task</th>
-                  {schemaKeys.map(k => (
-                    <th key={k} className="px-3 py-2.5 text-left font-medium text-gray-600">{k}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {details.map(d => (
-                  <tr key={d.id} className="hover:bg-gray-50">
-                    <td className="px-3 py-2 font-mono text-gray-400 sticky left-0 bg-white">{d.id.slice(0, 8)}…</td>
-                    {schemaKeys.map(k => {
-                      const val = d.extracted_json?.[k]
-                      const conf = d.extraction_confidence?.[k]
-                      return (
-                        <td key={k} className="px-3 py-2">
-                          <div className="flex items-center gap-1">
-                            <span className="text-gray-700">
-                              {val == null ? '—' : typeof val === 'object' ? JSON.stringify(val) : String(val)}
-                            </span>
-                            {conf != null && (
-                              <span className={`text-xs ${conf >= 0.8 ? 'text-green-500' : conf >= 0.5 ? 'text-yellow-500' : 'text-red-500'}`}>
-                                ({(conf * 100).toFixed(0)}%)
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                      )
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
       )}
     </div>
   )

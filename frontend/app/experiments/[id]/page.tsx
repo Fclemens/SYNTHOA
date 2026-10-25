@@ -15,8 +15,12 @@ import { VariablesTab } from './_components/VariablesTab'
 import { QuestionsTab } from './_components/QuestionsTab'
 import { SchemaTab } from './_components/SchemaTab'
 import { LaunchTab } from './_components/LaunchTab'
+import { RunsTab } from './_components/RunsTab'
+import { Breadcrumbs } from '@/components/ui/Breadcrumbs'
+import { InlineEdit } from '@/components/ui/InlineEdit'
+import { OverflowMenu } from '@/components/ui/OverflowMenu'
 
-type Tab = 'overview' | 'variables' | 'questions' | 'schema' | 'launch'
+type Tab = 'overview' | 'variables' | 'questions' | 'schema' | 'launch' | 'runs'
 
 // ── Main Page ────────────────────────────────────────────────────────────────
 
@@ -31,10 +35,12 @@ export default function ExperimentDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>(() => {
     const t = searchParams.get('tab')
-    return (t === 'launch' || t === 'variables' || t === 'questions' || t === 'schema') ? t : 'overview'
+    return (t === 'launch' || t === 'variables' || t === 'questions' || t === 'schema' || t === 'runs') ? t : 'overview'
   })
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [runCount, setRunCount] = useState(0)
+  const [audienceName, setAudienceName] = useState<string | null>(null)
 
   async function handleDelete() {
     try {
@@ -61,12 +67,25 @@ export default function ExperimentDetailPage() {
   }
 
   useEffect(() => { loadExperiment() }, [id])
+  useEffect(() => { api.listRuns(id, 200).then(r => setRunCount(r.length)).catch(() => {}) }, [id])
+  useEffect(() => {
+    if (experiment?.audience_id) api.getAudience(experiment.audience_id).then(a => setAudienceName(a.name)).catch(() => {})
+  }, [experiment?.audience_id])
+
+  async function handleRename(name: string) {
+    if (!name) return
+    try {
+      setExperiment(await api.updateExperiment(id, { name }))
+    } catch (e: unknown) {
+      toast(e instanceof Error ? e.message : 'Rename failed', 'error')
+    }
+  }
 
   if (loading) return <PageSpinner />
 
   if (error && !experiment) {
     return (
-      <div className="mx-auto max-w-5xl px-4 py-8">
+      <div className="py-8">
         <div className="rounded-lg bg-red-50 p-4 text-sm text-red-700">
           {error}
           <button className="ml-2 underline" onClick={loadExperiment}>Retry</button>
@@ -79,37 +98,37 @@ export default function ExperimentDetailPage() {
 
   // Tabs follow the workflow order; `todo` marks a step that still needs attention.
   const tabs: { key: Tab; label: string; todo?: boolean }[] = [
-    { key: 'overview', label: 'Overview' },
+    { key: 'overview', label: 'Setup' },
     { key: 'variables', label: `Variables (${experiment.dist_variables?.length ?? 0})` },
     { key: 'questions', label: `Questions (${experiment.questions?.length ?? 0})`, todo: !experiment.questions?.length },
     { key: 'schema', label: 'Output Schema', todo: !experiment.output_schemas?.[0]?.schema_json?.length },
     { key: 'launch', label: 'Launch' },
+    { key: 'runs', label: `Runs${runCount ? ` (${runCount})` : ''}` },
   ]
 
   return (
-    <div className="space-y-6 max-w-4xl">
-        {/* Back link */}
-        <Link href="/experiments" className="inline-flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-800 mb-6">
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-          Back to Experiments
-        </Link>
+    <div className="space-y-6">
+        <Breadcrumbs items={[{ label: 'Experiments', href: '/experiments' }, { label: experiment.name }]} />
 
         {/* Header */}
-        <div className="mb-6 flex items-start justify-between gap-4">
-          <div>
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold text-gray-900">{experiment.name}</h1>
-              <Badge color={experiment.execution_mode === 'pooled' ? 'blue' : 'purple'}>
-                {experiment.execution_mode}
-              </Badge>
+              <InlineEdit value={experiment.name} onSave={handleRename} className="text-2xl font-bold text-gray-900" />
+              <Badge color={experiment.execution_mode === 'pooled' ? 'blue' : 'purple'}>{experiment.execution_mode}</Badge>
             </div>
-            <p className="mt-1 text-xs text-gray-400">Created {fmtDate(experiment.created_at)}</p>
+            <p className="mt-1 text-sm text-gray-500">
+              {audienceName && <>Audience <Link href={`/audiences/${experiment.audience_id}`} className="text-indigo-400 hover:underline">{audienceName}</Link> · </>}
+              Created {fmtDate(experiment.created_at)}
+            </p>
           </div>
-          <Button size="sm" variant="danger" onClick={() => setDeleteConfirm(true)}>
-            Delete
-          </Button>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button size="sm" onClick={() => setActiveTab('launch')}>New run</Button>
+            <OverflowMenu items={[
+              { label: 'Export protocol (JSON)', onClick: () => window.open(api.exportExperimentProtocol(experiment.id), '_blank') },
+              { label: 'Delete experiment…', onClick: () => setDeleteConfirm(true), danger: true },
+            ]} />
+          </div>
         </div>
 
         {/* Delete confirmation modal */}
@@ -127,7 +146,7 @@ export default function ExperimentDetailPage() {
         </Modal>
 
         {/* Tabs */}
-        <div className="mb-6 flex border-b border-gray-200">
+        <div className="flex border-b border-gray-200">
           {tabs.map((tab, i) => (
             <button
               key={tab.key}
@@ -138,7 +157,7 @@ export default function ExperimentDetailPage() {
                   : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
             >
-              <span className="text-xs text-gray-400">{i + 1}</span>
+              {tab.key !== 'runs' && <span className="text-xs text-gray-400">{i + 1}</span>}
               {tab.label}
               {tab.todo && <span className="h-1.5 w-1.5 rounded-full bg-amber-400" title="Needs attention" />}
             </button>
@@ -160,6 +179,9 @@ export default function ExperimentDetailPage() {
         )}
         {activeTab === 'launch' && (
           <LaunchTab experiment={experiment} onGoTo={setActiveTab} />
+        )}
+        {activeTab === 'runs' && (
+          <RunsTab experiment={experiment} onNewRun={() => setActiveTab('launch')} onCount={setRunCount} />
         )}
     </div>
   )

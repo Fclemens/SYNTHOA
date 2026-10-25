@@ -34,6 +34,12 @@ export function SegmentsTab({ respondents, loading, schemaFields }: {
     if (key.startsWith('var:')) return r.injected_vars[key.slice(4)]
     return undefined
   }
+  // Values seen for the selected filter key: a dropdown for categories, a range hint for numbers
+  const filterSeen = filterKey ? respondents.map(r => getValue(r, filterKey)).filter(v => v !== undefined && v !== null && v !== '') : []
+  const filterNumeric = filterSeen.length > 0 && filterSeen.every(v => typeof v === 'number' || (!isNaN(Number(v)) && String(v).trim() !== ''))
+  const filterChoices = filterNumeric ? [] : Array.from(new Set(filterSeen.map(String))).sort()
+  const filterRange = filterNumeric ? `${Math.min(...filterSeen.map(Number))}–${Math.max(...filterSeen.map(Number))}` : ''
+
 
   // Apply filters
   const filteredResps = respondents.filter(r => {
@@ -125,7 +131,7 @@ export function SegmentsTab({ respondents, loading, schemaFields }: {
   return (
     <div className="space-y-5">
       {/* Filter bar */}
-      <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
+      <div className="glass rounded-[14px] p-4 space-y-3">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs font-medium text-gray-600">Filters</span>
           {filters.map((f, i) => {
@@ -144,8 +150,8 @@ export function SegmentsTab({ respondents, loading, schemaFields }: {
           {filters.length === 0 && <span className="text-xs text-gray-400">No filters active — analysing all {respondents.length} respondents</span>}
         </div>
         <div className="flex items-center gap-2">
-          <select value={filterKey} onChange={e => setFilterKey(e.target.value)}
-            className="rounded-lg border border-gray-300 px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none bg-white">
+          <select value={filterKey} onChange={e => { setFilterKey(e.target.value); setFilterValue('') }}
+            className="rounded-lg border border-gray-300 px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none bg-panel-strong">
             <option value="">— select trait/var —</option>
             {traitKeys.length > 0 && <optgroup label="Persona traits">
               {traitKeys.map(k => <option key={k} value={`trait:${k}`}>{k}</option>)}
@@ -155,18 +161,26 @@ export function SegmentsTab({ respondents, loading, schemaFields }: {
             </optgroup>}
           </select>
           <select value={filterOp} onChange={e => setFilterOp(e.target.value as Filter['op'])}
-            className="rounded-lg border border-gray-300 px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none bg-white">
+            className="rounded-lg border border-gray-300 px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none bg-panel-strong">
             <option value="=">=</option>
             <option value="≠">≠</option>
             <option value=">">&gt;</option>
             <option value="<">&lt;</option>
           </select>
-          <input type="text" value={filterValue} onChange={e => setFilterValue(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') addFilter() }}
-            placeholder="value"
-            className="flex-1 rounded-lg border border-gray-300 px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none" />
+          {filterChoices.length > 0 && filterChoices.length <= 30 && filterOp !== '>' && filterOp !== '<' ? (
+            <select value={filterValue} onChange={e => setFilterValue(e.target.value)}
+              className="flex-1 rounded-lg border border-gray-300 px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none">
+              <option value="">— value —</option>
+              {filterChoices.map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+          ) : (
+            <input type="text" value={filterValue} onChange={e => setFilterValue(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') addFilter() }}
+              placeholder={filterNumeric ? `number (${filterRange})` : 'value'}
+              className="flex-1 rounded-lg border border-gray-300 px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none" />
+          )}
           <button onClick={addFilter} disabled={!filterKey || !filterValue}
-            className="rounded-lg bg-indigo-600 text-white px-3 py-1 text-xs font-medium hover:bg-indigo-700 disabled:opacity-50">
+            className="rounded-lg bg-accent text-white px-3 py-1 text-xs font-medium hover:brightness-110 disabled:opacity-40">
             Add
           </button>
         </div>
@@ -179,18 +193,18 @@ export function SegmentsTab({ respondents, loading, schemaFields }: {
       <KeyDriverAnalysis respondents={filteredResps} traitKeys={traitKeys} schemaFields={schemaFields} />
 
       {/* Segment configuration */}
-      <div className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white px-5 py-3 flex-wrap">
+      <div className="flex items-center gap-4 glass rounded-[14px] px-5 py-3 flex-wrap">
         <div className="flex items-center gap-2">
           <label className="text-xs font-medium text-gray-600">Segment by trait</label>
           <select value={activeTrait} onChange={e => setSelectedTrait(e.target.value)}
-            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none bg-white">
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none bg-panel-strong">
             {traitKeys.map(k => <option key={k} value={k}>{k.replace(/_/g, ' ')}</option>)}
           </select>
         </div>
         <div className="flex items-center gap-2">
           <label className="text-xs font-medium text-gray-600">Output field</label>
           <select value={activeField} onChange={e => setSelectedField(e.target.value)}
-            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none bg-white">
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none bg-panel-strong">
             {schemaFields.map(f => <option key={f.key} value={f.key}>{f.description || f.key}</option>)}
           </select>
         </div>
@@ -204,7 +218,7 @@ export function SegmentsTab({ respondents, loading, schemaFields }: {
         {groupEntries.map(([val, group]) => {
           const values = group.map(r => r.extracted_json[activeField]).filter(v => v !== undefined && v !== null)
           return (
-            <div key={val} className="rounded-xl border border-gray-200 bg-white p-4">
+            <div key={val} className="glass rounded-[14px] p-4">
               <div className="flex items-center justify-between mb-3">
                 <div>
                   <span className="text-xs font-medium text-gray-500">{(activeTrait || '').replace(/_/g, ' ')} =</span>
@@ -220,7 +234,7 @@ export function SegmentsTab({ respondents, loading, schemaFields }: {
 
       {/* Cross-table: all fields × all segments with per-field significance */}
       {groupEntries.length > 1 && schemaFields.length > 1 && (
-        <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+        <div className="glass rounded-[14px] overflow-hidden">
           <div className="px-5 py-3 border-b border-gray-100 bg-gray-50">
             <h3 className="text-sm font-medium text-gray-700">All fields by segment</h3>
             <p className="text-xs text-gray-400 mt-0.5">Rows tinted when differences are statistically significant.</p>
@@ -262,7 +276,7 @@ export function SegmentsTab({ respondents, loading, schemaFields }: {
                   }
                   const sig = rowP !== null && rowP < 0.05
                   return (
-                    <tr key={f.key} className={`${sig ? 'bg-emerald-50/40 hover:bg-emerald-50' : 'hover:bg-gray-50'}`}>
+                    <tr key={f.key} className={`${sig ? 'bg-emerald-50 hover:bg-emerald-50' : 'hover:bg-gray-50'}`}>
                       <td className="px-4 py-2.5 text-gray-700 font-medium">{f.description || f.key}</td>
                       {groupEntries.map(([val, group]) => {
                         const vals = group.map(r => r.extracted_json[f.key]).filter(v => v !== undefined && v !== null)
@@ -311,7 +325,7 @@ export function KeyDriverAnalysis({ respondents, traitKeys, schemaFields }: {
   const maxStrength = Math.max(...topN.map(d => d.strength), 0.01)
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+    <div className="glass rounded-[14px] overflow-hidden">
       <div className="px-5 py-3 border-b border-gray-100 bg-gray-50 flex items-center gap-3">
         <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
@@ -319,7 +333,7 @@ export function KeyDriverAnalysis({ respondents, traitKeys, schemaFields }: {
         <h3 className="text-sm font-medium text-gray-700">Key Drivers</h3>
         <p className="text-xs text-gray-400">Which persona traits most influence —</p>
         <select value={selectedField} onChange={e => setSelectedField(e.target.value)}
-          className="rounded-lg border border-gray-300 px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none bg-white">
+          className="rounded-lg border border-gray-300 px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none bg-panel-strong">
           {schemaFields.map(f => <option key={f.key} value={f.key}>{f.description || f.key}</option>)}
         </select>
       </div>
@@ -347,7 +361,10 @@ export function KeyDriverAnalysis({ respondents, traitKeys, schemaFields }: {
           )
         })}
         <p className="text-xs text-gray-400 pt-2">
-          Numeric traits use Pearson r (teal positive, rose negative). Categorical traits use ANOVA η or Cramér&apos;s V (neutral colour).
+          <span className="mr-3 inline-flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-teal-400" /> positive r</span>
+          <span className="mr-3 inline-flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-rose-400" /> negative r</span>
+          <span className="mr-3 inline-flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-indigo-400" /> strength only</span>
+          Numeric traits use Pearson r; categorical traits (including labelled buckets) use ANOVA η or Cramér&apos;s V, which have no direction.
         </p>
       </div>
     </div>

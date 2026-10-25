@@ -23,6 +23,7 @@ from ..schemas.audience import (
 )
 from ..models.experiment import Experiment
 from ..models.simulation import SimulationTask
+from ..services.panel_check import build_panel_check
 from ..services.sampling_jobs import run_sampling_job
 
 router = APIRouter(prefix="/api/audiences", tags=["audiences"])
@@ -499,6 +500,24 @@ async def list_personas(audience_id: str, db: AsyncSession = Depends(get_db)):
         select(Persona).where(_active(audience_id)).order_by(Persona.created_at.desc())
     )
     return result.scalars().all()
+
+
+@router.get("/{audience_id}/panel-check")
+async def panel_check(audience_id: str, db: AsyncSession = Depends(get_db)):
+    """Target vs sampled distribution per variable, and target vs realised correlations."""
+    if not await db.get(Audience, audience_id):
+        raise HTTPException(status_code=404, detail="Audience not found")
+    variables = (await db.execute(
+        select(AudienceVariable).where(AudienceVariable.audience_id == audience_id).order_by(AudienceVariable.sort_order)
+    )).scalars().all()
+    correlations = (await db.execute(
+        select(VariableCorrelation).where(VariableCorrelation.audience_id == audience_id)
+    )).scalars().all()
+    rules = (await db.execute(
+        select(ConditionalRule).where(ConditionalRule.audience_id == audience_id)
+    )).scalars().all()
+    personas = (await db.execute(select(Persona.traits_json).where(_active(audience_id)))).scalars().all()
+    return build_panel_check(list(variables), list(correlations), list(rules), list(personas))
 
 
 @router.delete("/{audience_id}/personas/{persona_id}", status_code=204)

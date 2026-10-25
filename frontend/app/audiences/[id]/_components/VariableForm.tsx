@@ -333,7 +333,7 @@ export function VariableFormFields({
                       key={n}
                       type="button"
                       onClick={() => set({ bucket_labels: [...DEFAULT_BUCKET_PRESETS[n]] })}
-                      className={`text-xs px-2 py-0.5 rounded border ${form.bucket_labels.length === n ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-400'}`}
+                      className={`text-xs px-2 py-0.5 rounded border ${form.bucket_labels.length === n ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-panel-strong text-gray-600 border-gray-300 hover:border-indigo-400'}`}
                     >
                       {n === 2 ? 'Binary' : n === 3 ? 'Tertile' : n === 4 ? 'Quartile' : n === 5 ? 'Quintile' : n === 6 ? 'Sextile' : 'Septile'}
                     </button>

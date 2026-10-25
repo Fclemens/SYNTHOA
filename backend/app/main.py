@@ -24,6 +24,8 @@ _ADDED_COLUMNS = [
     ("simulation_runs", "analysis_cache", "JSON"),
     ("sampling_jobs", "backstory_mode", "TEXT NOT NULL DEFAULT 'llm'"),
     ("personas", "archived", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("simulation_runs", "run_number", "INTEGER"),
+    ("simulation_runs", "name", "TEXT"),
 ]
 
 # Columns and tables of removed features (plausibility checks, synonym
@@ -73,6 +75,17 @@ def _convert_placeholder_variables(conn) -> None:
         logger.info(f"Migrated {len(rows)} {{{{placeholder}}}} variable(s) to experiment variables")
 
 
+def _number_runs(conn) -> None:
+    """Give runs created before run numbers existed a 1, 2, 3… per experiment."""
+    pending = conn.execute(text("SELECT DISTINCT experiment_id FROM simulation_runs WHERE run_number IS NULL")).all()
+    for (experiment_id,) in pending:
+        ids = conn.execute(text(
+            "SELECT id FROM simulation_runs WHERE experiment_id = :e ORDER BY created_at, id"
+        ), {"e": experiment_id}).scalars().all()
+        for number, run_id in enumerate(ids, start=1):
+            conn.execute(text("UPDATE simulation_runs SET run_number = :n WHERE id = :id"), {"n": number, "id": run_id})
+
+
 def _migrate(conn) -> None:
     """Lightweight schema evolution for existing SQLite databases (no Alembic)."""
     insp = inspect(conn)
@@ -99,6 +112,9 @@ def _migrate(conn) -> None:
             conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
             logger.info(f"Migration: dropped {table}.{column}")
 
+    if "simulation_runs" in tables:
+        _number_runs(conn)
+
     for name, table, column in _INDEXES:
         conn.execute(text(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({column})"))
 
@@ -114,12 +130,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="GenAI Customer Simulator",
+    title="Synthoa",
     description=(
         "Platform for running synthetic customer interviews via LLMs. "
         "Four modules: Audience Builder → Script Editor → Pre-Flight → Execution & Results."
     ),
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 

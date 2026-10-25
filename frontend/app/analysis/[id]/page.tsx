@@ -3,8 +3,10 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { api, RunAnalysisSummary, FieldSummary, Respondent } from '@/lib/api'
-import { fmtCost } from '@/lib/utils'
+import { api, SimulationRun, RunAnalysisSummary, FieldSummary, Respondent } from '@/lib/api'
+import { fmtCost, fmtDateTime, runDetails, runLabel } from '@/lib/utils'
+import { Breadcrumbs } from '@/components/ui/Breadcrumbs'
+import { Button } from '@/components/ui/Button'
 import { ResultsTab } from './_components/ResultsTab'
 import { TranscriptsTab } from './_components/TranscriptsTab'
 import { VariablesTab } from './_components/VariablesTab'
@@ -26,7 +28,7 @@ export default function AnalysisDetailPage() {
   const [loadingRespondents, setLoadingRespondents] = useState(false)
   const [confidenceThreshold, setConfidenceThreshold] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const [runInfo, setRunInfo] = useState<{ created_at: string; model_pass1: string; total_cost_usd: number; experiment_id: string } | null>(null)
+  const [runInfo, setRunInfo] = useState<SimulationRun | null>(null)
   const [insightsModel, setInsightsModel] = useState<string>('…')
 
   const fetchSummary = useCallback(async (threshold: number) => {
@@ -34,7 +36,7 @@ export default function AnalysisDetailPage() {
     try {
       const [s, run] = await Promise.all([api.getRunSummary(runId, threshold), api.getRun(runId)])
       setSummary(s)
-      setRunInfo({ created_at: run.created_at, model_pass1: run.model_pass1, total_cost_usd: run.total_cost_usd, experiment_id: run.experiment_id })
+      setRunInfo(run)
     } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Failed to load') }
     finally { setLoadingSummary(false) }
   }, [runId])
@@ -69,31 +71,33 @@ export default function AnalysisDetailPage() {
   const tabs: { key: Tab; label: string }[] = [
     { key: 'results', label: 'Results' },
     { key: 'transcripts', label: `Transcripts${respondents ? ` (${respondents.length})` : ''}` },
-    ...(hasInjectedVars ? [{ key: 'variables' as Tab, label: 'Variables' }] : []),
+    ...(hasInjectedVars ? [{ key: 'variables' as Tab, label: 'A/B variables' }] : []),
     { key: 'segments', label: 'Segments' },
     { key: 'report', label: 'AI Report' },
   ]
 
   return (
     <div>
-      {/* Header */}
-      <div className="mb-6 flex items-start justify-between">
-        <div>
-          <Link href="/analysis" className="text-sm text-gray-400 hover:text-gray-600 transition-colors">← Analysis</Link>
-          <h1 className="text-xl font-bold text-gray-900 mt-1">Run {runId.slice(0, 8)}</h1>
+      <Breadcrumbs items={[
+        { label: 'Analysis', href: '/analysis' },
+        ...(runInfo ? [{ label: runInfo.experiment_name ?? 'Experiment', href: `/experiments/${runInfo.experiment_id}` }] : []),
+        { label: runInfo ? runLabel(runInfo) : 'Run' },
+      ]} />
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold text-gray-900">
+            {runInfo ? <>{runInfo.experiment_name} <span className="text-gray-500">· {runLabel(runInfo)}</span></> : 'Results'}
+          </h1>
           {runInfo && (
-            <p className="text-xs text-gray-400 mt-0.5">
-              {new Date(runInfo.created_at).toLocaleString()} · {runInfo.model_pass1} · {fmtCost(runInfo.total_cost_usd)}
+            <p className="mt-1 text-sm text-gray-500">
+              {runDetails(runInfo)} · {fmtCost(runInfo.total_cost_usd)} · {fmtDateTime(runInfo.created_at)}
             </p>
           )}
         </div>
-        <a href={api.exportAnalysisPdf(runId)} target="_blank" rel="noreferrer"
-          className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors">
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-          Export PDF
-        </a>
+        <div className="flex shrink-0 gap-2">
+          <Link href={`/runs/${runId}`}><Button size="sm" variant="ghost">Run details</Button></Link>
+          <a href={api.exportAnalysisPdf(runId)} target="_blank" rel="noreferrer"><Button size="sm" variant="secondary">Export PDF</Button></a>
+        </div>
       </div>
 
       {/* Stats bar */}
@@ -105,16 +109,16 @@ export default function AnalysisDetailPage() {
             { label: 'Drift flagged', value: summary.drift_flagged_count },
             { label: 'Fields', value: Object.keys(summary.fields).length },
           ].map(({ label, value }) => (
-            <div key={label} className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-center">
-              <div className="text-xl font-bold text-gray-900">{value}</div>
-              <div className="text-xs text-gray-400 mt-0.5">{label}</div>
+            <div key={label} className="rounded-[10px] border border-gray-100 bg-white/[0.025] px-4 py-3">
+              <div className="text-[11px] uppercase tracking-[0.06em] text-gray-500">{label}</div>
+              <div className="mt-0.5 font-mono text-xl font-medium text-gray-900">{value}</div>
             </div>
           ))}
         </div>
       )}
 
       {/* Confidence threshold */}
-      <div className="mb-5 flex items-center gap-4 rounded-xl border border-gray-200 bg-white px-5 py-3">
+      <div className="mb-5 flex items-center gap-4 glass rounded-[14px] px-5 py-3">
         <label className="text-xs font-medium text-gray-600 whitespace-nowrap">Confidence filter</label>
         <input type="range" min={0} max={1} step={0.05} value={confidenceThreshold}
           onChange={e => setConfidenceThreshold(Number(e.target.value))} className="flex-1 h-1.5 accent-indigo-600" />

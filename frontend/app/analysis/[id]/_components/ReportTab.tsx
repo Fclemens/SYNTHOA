@@ -53,7 +53,7 @@ export function ReportTab({ runId, insightsModel, confidenceThreshold, responden
   return (
     <div className="space-y-5">
       {/* Configuration panel */}
-      <div className="rounded-xl border border-gray-200 bg-white p-5 space-y-5">
+      <div className="glass rounded-[14px] p-5 space-y-5">
         {/* Analysis type */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">Analysis type</label>
@@ -126,7 +126,7 @@ export function ReportTab({ runId, insightsModel, confidenceThreshold, responden
 
       {/* Result */}
       {result && !loading && (
-        <div className="rounded-xl border border-gray-200 bg-white p-6">
+        <div className="glass rounded-[14px] p-6">
           <div className="flex items-center gap-3 mb-5 pb-4 border-b border-gray-100">
             <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700">
               {ANALYSIS_TYPES.find(t => t.value === result.analysis_type)?.label ?? 'Analysis'}

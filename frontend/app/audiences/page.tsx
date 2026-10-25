@@ -2,7 +2,8 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useRef } from 'react'
-import { api, Audience, AudienceExportBundle } from '@/lib/api'
+import { api, Audience, AudienceExportBundle, Experiment } from '@/lib/api'
+import { OverflowMenu } from '@/components/ui/OverflowMenu'
 import { fmtDate } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody } from '@/components/ui/Card'
@@ -15,6 +16,7 @@ export default function AudiencesPage() {
   const { toast } = useToast()
 
   const [audiences, setAudiences] = useState<Audience[]>([])
+  const [experiments, setExperiments] = useState<Experiment[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -24,8 +26,7 @@ export default function AudiencesPage() {
   const [deleting, setDeleting] = useState(false)
   const [duplicating, setDuplicating] = useState<string | null>(null)
 
-  async function handleDuplicate(e: React.MouseEvent, audience: Audience) {
-    e.stopPropagation()
+  async function handleDuplicate(audience: Audience) {
     try {
       setDuplicating(audience.id)
       const copy = await api.duplicateAudience(audience.id)
@@ -69,8 +70,9 @@ export default function AudiencesPage() {
     try {
       setLoading(true)
       setError(null)
-      const data = await api.listAudiences()
+      const [data, exps] = await Promise.all([api.listAudiences(), api.listExperiments()])
       setAudiences(data)
+      setExperiments(exps)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load audiences')
     } finally {
@@ -113,7 +115,7 @@ export default function AudiencesPage() {
   }
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-6">
         {/* Header */}
         <div className="mb-8 flex items-center justify-between">
           <div>
@@ -151,7 +153,7 @@ export default function AudiencesPage() {
         )}
 
         {!loading && !error && audiences.length === 0 && (
-          <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-200 bg-white py-16 text-center">
+          <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-200 bg-panel-strong py-16 text-center">
             <p className="text-gray-500">No audiences yet. Create one to get started.</p>
             <Button className="mt-4" onClick={() => setModalOpen(true)}>Create your first audience</Button>
           </div>
@@ -166,49 +168,29 @@ export default function AudiencesPage() {
                 onClick={() => router.push(`/audiences/${audience.id}`)}
                 className="relative"
               >
-                <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
-                  <button
-                    onClick={e => handleDuplicate(e, audience)}
-                    disabled={duplicating === audience.id}
-                    className="rounded p-1 text-gray-300 hover:bg-indigo-50 hover:text-indigo-500 transition-colors disabled:opacity-40"
-                    title="Duplicate audience"
-                  >
-                    {duplicating === audience.id
-                      ? <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
-                      : <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-4 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                        </svg>
-                    }
-                  </button>
-                  <button
-                    onClick={e => { e.stopPropagation(); setDeleteTarget(audience) }}
-                    className="rounded p-1 text-gray-300 hover:bg-red-50 hover:text-red-500 transition-colors"
-                    title="Delete audience"
-                  >
-                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
+                <div className="absolute right-2 top-2 z-10">
+                  <OverflowMenu items={[
+                    { label: duplicating === audience.id ? 'Duplicating…' : 'Duplicate', onClick: () => handleDuplicate(audience), disabled: duplicating === audience.id },
+                    { label: 'Export JSON', onClick: () => window.open(api.exportAudience(audience.id, true), '_blank') },
+                    { label: 'Delete audience…', onClick: () => setDeleteTarget(audience), danger: true },
+                  ]} />
                 </div>
                 <CardBody>
-                  <div className="flex items-start justify-between gap-2 pr-14">
+                  <div className="flex items-start justify-between gap-2 pr-8">
                     <h2 className="font-semibold text-gray-900 leading-tight">{audience.name}</h2>
-                    <span className="relative group flex items-center gap-1 text-xs shrink-0 text-gray-400">
-                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a4 4 0 00-5.356-3.712M9 20H4v-2a4 4 0 015.356-3.712M15 7a4 4 0 11-8 0 4 4 0 018 0zm6 4a3 3 0 11-6 0 3 3 0 016 0z" />
-                      </svg>
-                      <span className={audience.persona_count ? 'text-green-600 font-medium' : ''}>
-                        {audience.persona_count ?? 0}
-                      </span>
-                      <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-gray-800 px-2 py-0.5 text-xs text-white opacity-0 group-hover:opacity-100 transition-opacity">
-                        {audience.persona_count ?? 0} personas
-                      </span>
-                    </span>
                   </div>
                   {audience.description && (
                     <p className="mt-2 text-sm text-gray-500 line-clamp-2">{audience.description}</p>
                   )}
-                  <p className="mt-3 text-xs text-gray-400">Created {fmtDate(audience.created_at)}</p>
+                  <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 border-t border-gray-100 pt-2 text-xs text-gray-500">
+                    <span className={audience.persona_count ? 'text-green-700' : 'text-amber-700'}>
+                      {audience.persona_count ? `${audience.persona_count} personas` : 'No personas yet'}
+                    </span>
+                    <span>{audience.variables.length} variable{audience.variables.length !== 1 ? 's' : ''}</span>
+                    <span>
+                      {(() => { const n = experiments.filter(e => e.audience_id === audience.id).length; return n ? `used by ${n} experiment${n !== 1 ? 's' : ''}` : 'not used yet' })()}
+                    </span>
+                  </div>
                 </CardBody>
               </Card>
             ))}

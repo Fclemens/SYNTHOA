@@ -4,7 +4,7 @@ import { usePolling } from '@/lib/usePolling'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { api, Audience, AudienceVariable, Persona, SamplingJob } from '@/lib/api'
-import { fmtDate, truncate, pct } from '@/lib/utils'
+import { distributionSummary, fmtDate, pct } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
@@ -13,6 +13,13 @@ import { PageSpinner } from '@/components/ui/Spinner'
 import { ProgressBar } from '@/components/ui/ProgressBar'
 import { useToast } from '@/components/ui/Toast'
 import { DistType, VarFormState, defaultForm, buildDistribution, VariableFormFields } from './_components/VariableForm'
+import { PersonasTable } from './_components/PersonasTable'
+import { PanelCheck } from './_components/PanelCheck'
+import { Breadcrumbs } from '@/components/ui/Breadcrumbs'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { InlineEdit } from '@/components/ui/InlineEdit'
+import { OverflowMenu } from '@/components/ui/OverflowMenu'
+import { UnsavedBar } from '@/components/ui/UnsavedBar'
 
 // ── Main page ───────────────────────────────────────────────────────────────
 
@@ -61,32 +68,13 @@ export default function AudienceDetailPage() {
   const [savingTemplate, setSavingTemplate] = useState(false)
   const templateRef = useRef<HTMLTextAreaElement>(null)
 
-  // Inline name editing
-  const [editingName, setEditingName] = useState(false)
-  const [nameInput, setNameInput] = useState('')
-  const [savingName, setSavingName] = useState(false)
-  const nameInputRef = useRef<HTMLInputElement>(null)
-
-  function startEditName() {
-    if (!audience) return
-    setNameInput(audience.name)
-    setEditingName(true)
-    setTimeout(() => nameInputRef.current?.select(), 0)
-  }
-
-  async function saveAudienceName() {
-    if (!audience || !nameInput.trim()) return
-    if (nameInput.trim() === audience.name) { setEditingName(false); return }
+  async function saveAudienceName(name: string) {
+    if (!audience || !name) return
     try {
-      setSavingName(true)
-      const updated = await api.updateAudience(audience.id, { name: nameInput.trim() })
-      setAudience(updated)
-      setEditingName(false)
+      setAudience(await api.updateAudience(audience.id, { name }))
       toast('Audience renamed', 'success')
     } catch {
       toast('Failed to rename audience', 'error')
-    } finally {
-      setSavingName(false)
     }
   }
 
@@ -108,6 +96,7 @@ export default function AudienceDetailPage() {
 
   // Delete persona
   const [deletingPersonaId, setDeletingPersonaId] = useState<string | null>(null)
+  const [personaView, setPersonaView] = useState<'table' | 'check'>('table')
 
   async function handleDeletePersona(personaId: string) {
     try {
@@ -121,11 +110,8 @@ export default function AudienceDetailPage() {
     }
   }
 
-  // Export
-  const [exportIncludePersonas, setExportIncludePersonas] = useState(true)
-
-  function handleExport() {
-    const url = api.exportAudience(id, exportIncludePersonas)
+  function handleExport(includePersonas: boolean) {
+    const url = api.exportAudience(id, includePersonas)
     const a = document.createElement('a')
     a.href = url
     a.click()
@@ -133,6 +119,7 @@ export default function AudienceDetailPage() {
 
   // Correlations: map of "varAid__varBid" -> value string
   const [corrValues, setCorrValues] = useState<Record<string, string>>({})
+  const [savedCorrValues, setSavedCorrValues] = useState<Record<string, string>>({})
   const [savingCorr, setSavingCorr] = useState(false)
 
   async function load() {
@@ -156,6 +143,7 @@ export default function AudienceDetailPage() {
         corrMap[key] = String(c.correlation)
       }
       setCorrValues(corrMap)
+      setSavedCorrValues(corrMap)
       // Restore active job if the most recent one is still running/stopped
       if (jobs.length > 0 && (jobs[0].status === 'running' || jobs[0].status === 'stopped')) {
         setActiveJob(jobs[0])
@@ -385,9 +373,11 @@ export default function AudienceDetailPage() {
     try {
       setSavingCorr(true)
       await api.upsertCorrelations(id, correlations)
-      toast(`Saved ${correlations.length} correlation${correlations.length !== 1 ? 's' : ''}`, 'success')
+      setSavedCorrValues(corrValues)
+      return true
     } catch (e: unknown) {
       toast(e instanceof Error ? e.message : 'Failed to save correlations', 'error')
+      return false
     } finally {
       setSavingCorr(false)
     }
@@ -400,15 +390,19 @@ export default function AudienceDetailPage() {
         backstory_prompt_template: promptTemplate.trim() || null,
       })
       setAudience(aud)
-      toast('Prompt template saved', 'success')
+      return true
     } catch (e: unknown) {
       toast(e instanceof Error ? e.message : 'Failed to save template', 'error')
+      return false
     } finally {
       setSavingTemplate(false)
     }
   }
 
+  const [pendingVarDelete, setPendingVarDelete] = useState<AudienceVariable | null>(null)
+
   async function handleDeleteVariable(varId: string) {
+    setPendingVarDelete(null)
     try {
       setDeletingVarId(varId)
       await api.deleteVariable(id, varId)
@@ -437,11 +431,32 @@ export default function AudienceDetailPage() {
     return v.var_type === 'continuous' || v.var_type === 'ordinal' || isBinary(v)
   }
 
+  const normCorr = (m: Record<string, string>) =>
+    JSON.stringify(Object.entries(m).filter(([, v]) => v !== '' && parseFloat(v) !== 0).map(([k, v]) => [k, parseFloat(v)]).sort())
+  const corrDirty = normCorr(corrValues) !== normCorr(savedCorrValues)
+  const templateDirty = (promptTemplate.trim() || null) !== (audience?.backstory_prompt_template ?? null)
+  const templateInvalid = !!audience && Array.from(promptTemplate.matchAll(/\{([^}]+)\}/g), m => m[1].trim())
+    .some(t => !(audience.variables ?? []).some(v => v.name === t))
+
+  async function saveAll() {
+    if (templateDirty && templateInvalid) {
+      toast('Fix the unknown placeholders in the backstory template first', 'error')
+      return
+    }
+    const ok = (!corrDirty || await handleSaveCorrelations()) && (!templateDirty || await handleSaveTemplate())
+    if (ok) toast('Changes saved', 'success')
+  }
+
+  function discardAll() {
+    setCorrValues(savedCorrValues)
+    setPromptTemplate(audience?.backstory_prompt_template ?? '')
+  }
+
   if (loading) return <PageSpinner />
 
   if (error) {
     return (
-      <div className="mx-auto max-w-4xl px-4 py-8">
+      <div className="py-8">
         <div className="rounded-lg bg-red-50 p-4 text-sm text-red-700">
           {error}
           <button className="ml-2 underline" onClick={load}>Retry</button>
@@ -455,84 +470,25 @@ export default function AudienceDetailPage() {
   const variables = (audience.variables ?? []).slice().sort((a, b) => a.sort_order - b.sort_order)
 
   return (
-    <div className="space-y-6 max-w-4xl">
-      {/* Back link */}
-      <Link href="/audiences" className="inline-flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-800 mb-6">
-        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-        </svg>
-        Back to Audiences
-      </Link>
+    <div className="space-y-6">
+      <Breadcrumbs items={[{ label: 'Audiences', href: '/audiences' }, { label: audience.name }]} />
 
       {/* Header */}
-      <div className="mb-8 flex items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-3">
-            {editingName ? (
-              <div className="flex items-center gap-2">
-                <input
-                  ref={nameInputRef}
-                  type="text"
-                  value={nameInput}
-                  onChange={e => setNameInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') saveAudienceName(); if (e.key === 'Escape') setEditingName(false) }}
-                  className="text-2xl font-bold text-gray-900 border-b-2 border-indigo-500 outline-none bg-transparent w-72"
-                  disabled={savingName}
-                  autoFocus
-                />
-                <button
-                  onClick={saveAudienceName}
-                  disabled={savingName || !nameInput.trim()}
-                  className="text-xs px-2 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
-                >
-                  {savingName ? '…' : 'Save'}
-                </button>
-                <button
-                  onClick={() => setEditingName(false)}
-                  disabled={savingName}
-                  className="text-xs px-2 py-1 rounded bg-gray-100 text-gray-600 hover:bg-gray-200"
-                >
-                  Cancel
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 group">
-                <h1 className="text-2xl font-bold text-gray-900">{audience.name}</h1>
-                <button
-                  onClick={startEditName}
-                  title="Rename audience"
-                  className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-indigo-600 p-1 rounded"
-                >
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 012.828 2.828L11.828 15.828a2 2 0 01-1.415.586H8v-2.414A2 2 0 018.586 12.5L9 13z" />
-                  </svg>
-                </button>
-              </div>
-            )}
-            <Badge color="indigo">{variables.length} variable{variables.length !== 1 ? 's' : ''}</Badge>
-          </div>
-          {audience.description && (
-            <p className="mt-2 text-gray-500">{audience.description}</p>
-          )}
-          <p className="mt-1 text-xs text-gray-400">Created {fmtDate(audience.created_at)}</p>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <InlineEdit value={audience.name} onSave={saveAudienceName} className="text-2xl font-bold text-gray-900" />
+          {audience.description && <p className="mt-1 text-gray-500">{audience.description}</p>}
+          <p className="mt-1 text-sm text-gray-500">
+            {personas.length} personas · {variables.length} variable{variables.length !== 1 ? 's' : ''} · created {fmtDate(audience.created_at)}
+          </p>
         </div>
-        {/* Header actions */}
-        <div className="flex items-center gap-2 shrink-0">
-          <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={exportIncludePersonas}
-              onChange={e => setExportIncludePersonas(e.target.checked)}
-              className="rounded border-gray-300 text-indigo-600"
-            />
-            incl. personas
-          </label>
-          <Button size="sm" variant="secondary" onClick={handleExport}>
-            ↓ Export JSON
-          </Button>
-          <Button size="sm" variant="danger" onClick={() => setDeleteAudienceConfirm(true)}>
-            Delete
-          </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button size="sm" onClick={() => setSampleModalOpen(true)}>Sample personas</Button>
+          <OverflowMenu items={[
+            { label: 'Export JSON (with personas)', onClick: () => handleExport(true) },
+            { label: 'Export JSON (definition only)', onClick: () => handleExport(false) },
+            { label: 'Delete audience…', onClick: () => setDeleteAudienceConfirm(true), danger: true },
+          ]} />
         </div>
       </div>
 
@@ -586,12 +542,7 @@ export default function AudienceDetailPage() {
                           {v.var_type}{isBinary(v) ? ' · binary' : ''}
                         </Badge>
                       </td>
-                      <td className="px-4 py-3 text-gray-600">
-                        <code className="rounded bg-gray-100 px-1 py-0.5 text-xs">
-                          {JSON.stringify(v.distribution).slice(0, 60)}
-                          {JSON.stringify(v.distribution).length > 60 ? '…' : ''}
-                        </code>
-                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-700">{distributionSummary(v.distribution as Record<string, unknown>)}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <button
@@ -601,9 +552,9 @@ export default function AudienceDetailPage() {
                             Edit
                           </button>
                           <button
-                            onClick={() => handleDeleteVariable(v.id)}
+                            onClick={() => setPendingVarDelete(v)}
                             disabled={deletingVarId === v.id}
-                            className="text-xs text-red-400 hover:text-red-600 font-medium disabled:opacity-50"
+                            className="text-xs text-red-700 hover:text-red-800 font-medium disabled:opacity-50"
                           >
                             {deletingVarId === v.id ? '…' : 'Delete'}
                           </button>
@@ -634,9 +585,7 @@ export default function AudienceDetailPage() {
                 <span className="inline-flex items-center gap-1 text-xs text-gray-500"><span className="w-2 h-2 rounded-full bg-green-400 inline-block" /> binary</span>
               </div>
             </div>
-            <Button size="sm" loading={savingCorr} onClick={handleSaveCorrelations}>
-              Save Correlations
-            </Button>
+
           </div>
           <Card>
             <div className="overflow-x-auto">
@@ -733,9 +682,7 @@ export default function AudienceDetailPage() {
                   to insert a trait value. Click a chip to insert at your cursor position.
                 </p>
               </div>
-              <Button size="sm" loading={savingTemplate} disabled={hasInvalid} onClick={handleSaveTemplate}>
-                Save Template
-              </Button>
+
             </div>
 
             <Card>
@@ -811,10 +758,10 @@ Respond authentically as this person would.`}
             )}
           </h2>
           <div className="flex gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setFreshModalOpen(true)}>
-              Start Fresh
+            <Button variant="ghost" size="sm" onClick={() => setFreshModalOpen(true)}>
+              Replace panel…
             </Button>
-            <Button onClick={() => setSampleModalOpen(true)}>Sample More</Button>
+            <Button size="sm" variant="secondary" onClick={() => setSampleModalOpen(true)}>Sample more</Button>
           </div>
         </div>
 
@@ -863,59 +810,42 @@ Respond authentically as this person would.`}
 
         {personas.length === 0 ? (
           <Card>
-            <CardBody>
-              <p className="text-sm text-gray-500 text-center py-6">
-                No personas yet. Click &ldquo;Sample Personas&rdquo; to generate synthetic profiles based on the audience variables.
-              </p>
+            <CardBody className="py-10 text-center">
+              <p className="font-medium text-gray-900">No personas yet</p>
+              <p className="mt-1 text-sm text-gray-500">Sample a panel of synthetic respondents from the variables above.</p>
+              <Button className="mt-4" onClick={() => setSampleModalOpen(true)}>Sample personas</Button>
             </CardBody>
           </Card>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {personas.map(persona => (
-              <Card key={persona.id}>
-                <CardHeader className="flex items-center justify-between py-3">
-                  <span className="text-xs font-mono text-gray-400">{persona.id.slice(0, 8)}…</span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleDeletePersona(persona.id)}
-                      disabled={deletingPersonaId === persona.id}
-                      className="text-gray-300 hover:text-red-500 disabled:opacity-40 transition-colors"
-                      title="Delete persona"
-                    >
-                      {deletingPersonaId === persona.id ? (
-                        <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                      ) : (
-                        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                      )}
-                    </button>
-                  </div>
-                </CardHeader>
-                <CardBody className="py-3">
-                  <dl className="space-y-1">
-                    {Object.entries(persona.traits_json).slice(0, 6).map(([k, v]) => (
-                      <div key={k} className="flex justify-between gap-2 text-xs">
-                        <dt className="text-gray-500 capitalize">{k.replace(/_/g, ' ')}</dt>
-                        <dd className="font-medium text-gray-700 truncate max-w-[120px]">{String(v)}</dd>
-                      </div>
-                    ))}
-                    {Object.keys(persona.traits_json).length > 6 && (
-                      <p className="text-xs text-gray-400">+{Object.keys(persona.traits_json).length - 6} more</p>
-                    )}
-                  </dl>
-                  {persona.backstory && (
-                    <div className="mt-3 border-t border-gray-100 pt-2">
-                      <p className="text-xs italic text-gray-500">
-                        {truncate(persona.backstory, 120)}
-                      </p>
-                    </div>
-                  )}
-                  <p className="mt-2 text-xs text-gray-400">{fmtDate(persona.created_at)}</p>
-                </CardBody>
-              </Card>
-            ))}
-          </div>
+          <>
+            <div className="mb-3 flex gap-1 border-b border-gray-200">
+              {([['table', 'Table'], ['check', 'Panel check']] as const).map(([key, label]) => (
+                <button key={key} onClick={() => setPersonaView(key)}
+                  className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors ${personaView === key ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-800'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {personaView === 'table'
+              ? <PersonasTable personas={personas} traitOrder={variables.map(v => v.name)} onDelete={handleDeletePersona} deletingId={deletingPersonaId} />
+              : <PanelCheck audienceId={id} refreshKey={`${personas.length}-${JSON.stringify(savedCorrValues)}`} />}
+          </>
         )}
       </section>
+
+      <UnsavedBar dirty={corrDirty || templateDirty} saving={savingCorr || savingTemplate} onSave={saveAll} onDiscard={discardAll}
+        message={[corrDirty && 'correlations', templateDirty && 'backstory template'].filter(Boolean).join(' and ') + ' not saved'} />
+
+      <ConfirmDialog
+        open={!!pendingVarDelete}
+        title="Delete variable?"
+        confirmLabel="Delete"
+        danger
+        onConfirm={() => pendingVarDelete && handleDeleteVariable(pendingVarDelete.id)}
+        onClose={() => setPendingVarDelete(null)}
+      >
+        <strong>{pendingVarDelete?.name}</strong> and its correlations and rules will be removed. Personas already sampled keep their values.
+      </ConfirmDialog>
 
       {/* Delete Audience Modal */}
       <Modal open={deleteAudienceConfirm} onClose={() => setDeleteAudienceConfirm(false)} title="Delete Audience">
@@ -1001,7 +931,8 @@ Respond authentically as this person would.`}
               onChange={e => setSampleForm(f => ({ ...f, reuse_existing: e.target.checked }))}
               className="rounded border-gray-300 text-indigo-600"
             />
-            <span className="font-medium text-gray-700">Only generate what&apos;s missing (reuse existing)</span>
+            <span className="font-medium text-gray-700">Top up to {sampleForm.n}</span>
+            <span className="text-xs text-gray-500">(only sample the difference from the {personas.length} you have)</span>
           </label>
 
           <div className="flex justify-end gap-3 pt-2">

@@ -35,7 +35,7 @@ export function TranscriptsTab({ respondents, loading, schemaFields }: {
         <span className="text-xs text-gray-400">{filtered.length} of {respondents.length}</span>
       </div>
 
-      <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+      <div className="glass rounded-[14px] overflow-hidden">
         {/* Table header */}
         <div className="grid border-b border-gray-100 bg-gray-50 px-4 py-2.5 text-xs font-medium text-gray-500 gap-3"
           style={{ gridTemplateColumns: `2rem 1fr ${traitKeys.map(() => '1fr').join(' ')} ${schemaFields.slice(0, 3).map(() => '1fr').join(' ')} 5rem` }}>
@@ -54,7 +54,7 @@ export function TranscriptsTab({ respondents, loading, schemaFields }: {
           const isOpen = expanded === r.task_id
           const completedBoth = r.pass1_status === 'completed' && r.pass2_status === 'completed'
           return (
-            <div key={r.task_id} className={`border-b border-gray-100 last:border-0 ${isOpen ? 'bg-indigo-50/30' : 'hover:bg-gray-50'} transition-colors`}>
+            <div key={r.task_id} className={`border-b border-gray-100 last:border-0 ${isOpen ? 'bg-indigo-50' : 'hover:bg-gray-50'} transition-colors`}>
               {/* Row */}
               <button className="w-full text-left" onClick={() => setExpanded(isOpen ? null : r.task_id)}>
                 <div className="grid items-center px-4 py-3 text-sm gap-3"
@@ -148,7 +148,7 @@ export function RespondentDeepDive({ respondent: r }: { respondent: Respondent }
           <div className="flex items-center justify-between mb-2">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Transcript</p>
             {canParse && (
-              <div className="inline-flex rounded-lg border border-gray-200 bg-white text-xs">
+              <div className="inline-flex rounded-lg border border-gray-200 bg-panel-strong text-xs">
                 <button onClick={() => setViewMode('parsed')}
                   className={`px-2 py-1 rounded-l-lg ${viewMode === 'parsed' ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>
                   Q/A
@@ -170,7 +170,7 @@ export function RespondentDeepDive({ respondent: r }: { respondent: Respondent }
                   }`}>{t.speaker === 'interviewer' ? 'Q' : t.speaker === 'respondent' ? 'A' : '·'}</span>
                   <div className={`flex-1 rounded-lg px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap ${
                     t.speaker === 'interviewer' ? 'bg-indigo-50 text-indigo-900' :
-                    t.speaker === 'respondent' ? 'bg-white border border-gray-200 text-gray-700' :
+                    t.speaker === 'respondent' ? 'bg-panel-strong border border-gray-200 text-gray-700' :
                     'bg-gray-100 text-gray-500'
                   }`}>
                     {t.text}

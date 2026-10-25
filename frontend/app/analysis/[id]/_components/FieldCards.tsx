@@ -138,7 +138,7 @@ export function TextCard({ field, runId, confidenceThreshold }: {
           {error && <span className="text-xs text-red-500">{error}</span>}
         </div>
       ) : (
-        <div className="space-y-2.5 rounded-lg border border-teal-100 bg-teal-50/40 p-3">
+        <div className="space-y-2.5 rounded-lg border border-teal-100 bg-teal-50 p-3">
           {/* Sentiment bar */}
           <div>
             <div className="flex items-center justify-between mb-1">
@@ -160,7 +160,7 @@ export function TextCard({ field, runId, confidenceThreshold }: {
               <div className="flex flex-wrap gap-1.5">
                 {analytics.themes.map(t => (
                   <div key={t.name}
-                    className="inline-flex items-center gap-1.5 rounded-full bg-white border border-teal-200 px-2.5 py-1 text-xs"
+                    className="inline-flex items-center gap-1.5 rounded-full bg-panel-strong border border-teal-200 px-2.5 py-1 text-xs"
                     title={t.description}>
                     <span className="font-medium text-teal-700">{t.name}</span>
                     <span className="text-gray-400">{t.count}</span>
@@ -227,7 +227,7 @@ export function FieldCard({ field, runId, confidenceThreshold, insightsModel, on
   }
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-5">
+    <div className="glass rounded-[14px] p-5">
       <div className="flex items-start justify-between mb-1">
         <div>
           <h3 className="text-sm font-semibold text-gray-900">{label}</h3>

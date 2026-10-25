@@ -6,7 +6,7 @@ interface ProgressBarProps {
 }
 
 const colors = {
-  indigo: 'bg-indigo-500',
+  indigo: 'bg-gradient-to-r from-[#8b5cf6] to-[#7dd3fc]',
   green:  'bg-green-500',
   yellow: 'bg-yellow-500',
   red:    'bg-red-500',
@@ -18,7 +18,7 @@ export function ProgressBar({ value, color = 'indigo', showLabel, size = 'md' }:
   const pct = Math.min(100, Math.max(0, value))
   return (
     <div className="flex items-center gap-3">
-      <div className={`flex-1 overflow-hidden rounded-full bg-gray-200 ${heights[size]}`}>
+      <div className={`flex-1 overflow-hidden rounded-full bg-white/[0.07] ${heights[size]}`}>
         <div
           className={`${heights[size]} rounded-full transition-all duration-300 ${colors[color]}`}
           style={{ width: `${pct}%` }}

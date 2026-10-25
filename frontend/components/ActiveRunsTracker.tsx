@@ -3,7 +3,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { api, isRunActive as isActive, SimulationRun } from '@/lib/api'
 import { usePolling } from '@/lib/usePolling'
-import { runStatusLabel } from '@/lib/utils'
+import { runLabel, runStatusLabel } from '@/lib/utils'
 import { useToast } from '@/components/ui/Toast'
 import { PruneRunsModal } from '@/components/PruneRunsModal'
 
@@ -156,8 +156,8 @@ export default function ActiveRunsTracker() {
               {/* Row: dot · id · label */}
               <div className="flex items-center gap-2 mb-1.5">
                 <span className={`h-2 w-2 flex-shrink-0 rounded-full ${statusDot(run.status)}`} />
-                <span className="font-mono text-xs text-gray-600 group-hover:text-indigo-600 transition-colors flex-1 truncate">
-                  {run.id.slice(0, 8)}…
+                <span className="flex-1 truncate text-xs text-gray-700 transition-colors group-hover:text-indigo-700" title={`${run.experiment_name ?? ''} · ${runLabel(run)}`}>
+                  {runLabel(run)} <span className="text-gray-500">· {run.experiment_name}</span>
                 </span>
                 <span className={`text-xs font-medium flex-shrink-0 tabular-nums ${
                   run.status === 'completed' ? 'text-green-600' :

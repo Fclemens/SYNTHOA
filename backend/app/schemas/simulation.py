@@ -22,6 +22,11 @@ class SimulationRunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True, protected_namespaces=())
     id: str
     experiment_id: str
+    experiment_name: Optional[str] = None
+    run_number: Optional[int] = None
+    name: Optional[str] = None
+    execution_mode: str = "pooled"
+    dual_extraction: bool = True
     model_pass1: str
     model_pass2: str
     status: str
@@ -31,6 +36,10 @@ class SimulationRunOut(BaseModel):
     total_cost_usd: float
     created_at: datetime
     completed_at: Optional[datetime]
+
+
+class RunUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=120)
 
 
 # ── SimulationTask ────────────────────────────────────────────────────────────
@@ -51,6 +60,8 @@ class SimulationTaskSummary(BaseModel):
 
 
 class SimulationTaskDetail(SimulationTaskSummary):
+    persona_traits: dict[str, Any] = {}
+    persona_backstory: Optional[str] = None
     pass1_prompt: Optional[str]
     raw_transcript: Optional[str]
     pass1_tokens_in: Optional[int]

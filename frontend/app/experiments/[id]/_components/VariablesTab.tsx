@@ -8,6 +8,7 @@ import { Card, CardBody } from '@/components/ui/Card'
 import { Modal } from '@/components/ui/Modal'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
+import { tokenReport } from './tokens'
 import { VarFormState, defaultVarForm, buildDistribution, distSummary, VarFormFields, DistType, CatOption } from './distributions'
 
 // ── Variables Tab ─────────────────────────────────────────────────────────────
@@ -29,8 +30,10 @@ export function VariablesTab({ experiment, onChanged }: { experiment: Experiment
     const base: Partial<VarFormState> = {
       name: v.name, var_type: v.var_type, sort_order: v.sort_order,
       dist_type: t === 'categorical' ? 'categorical' : t,
+      round_to_int: !!d.round_to_int,
     }
-    if (t === 'normal') { base.mean = String(d.mean ?? 0); base.std = String(d.std ?? 1) }
+    if (t === 'truncated_normal') { base.mean = String(d.mean ?? 0); base.std = String(d.std ?? 1); base.min = String(d.min ?? 0); base.max = String(d.max ?? 1) }
+    else if (t === 'normal') { base.mean = String(d.mean ?? 0); base.std = String(d.std ?? 1) }
     else if (t === 'log_normal') { base.real_mean = String(d.real_mean ?? 50000); base.real_std = String(d.real_std ?? 20000) }
     else if (t === 'uniform') { base.min = String(d.min ?? 0); base.max = String(d.max ?? 1) }
     else if (t === 'triangular') { base.min = String(d.min ?? 0); base.max = String(d.max ?? 1); base.mode = String(d.mode ?? 0.5) }
@@ -76,21 +79,24 @@ export function VariablesTab({ experiment, onChanged }: { experiment: Experiment
 
   const vars = (experiment.dist_variables ?? []).slice().sort((a, b) => a.sort_order - b.sort_order)
 
-  // Compute which variable names are referenced in any question text
-  const allQuestionText = (experiment.questions ?? []).map(q => q.question_text).join(' ')
-  const referencedVarNames = new Set(
-    Array.from(allQuestionText.matchAll(/\{([^}]+)\}/g), m => m[1])
-  )
+  const report = tokenReport(experiment)
 
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h2 className="font-semibold text-gray-800">Experiment Variables</h2>
-          <p className="text-xs text-gray-400 mt-0.5">Use <code className="bg-gray-100 px-1 rounded">{'{variable_name}'}</code> in question text to inject a sampled value at interview time.</p>
+          <p className="text-xs text-gray-400 mt-0.5">Use <code className="bg-gray-100 px-1 rounded">{'{variable_name}'}</code> in the context or a question to inject a sampled value — e.g. a price or brand for an A/B test.</p>
         </div>
         <Button size="sm" onClick={openAdd}>+ Add Variable</Button>
       </div>
+
+      {report.unknown.length > 0 && (
+        <div className="mb-4 rounded-[10px] border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+          Not defined as variables (sent to the model as literal text):{' '}
+          {report.unknown.map(u => <code key={u.token + u.where} className="mr-2">{`{${u.token}}`} <span className="text-xs">({u.where})</span></code>)}
+        </div>
+      )}
 
       {vars.length === 0 ? (
         <Card>
@@ -102,20 +108,23 @@ export function VariablesTab({ experiment, onChanged }: { experiment: Experiment
         <Card>
           <div className="divide-y divide-gray-100">
             {vars.map(v => {
-              const isUsed = referencedVarNames.has(v.name)
+              const use = report.usage[v.name]
+              const where = [use?.context ? 'context' : null, use?.questions.length ? use.questions.map(n => `Q${n}`).join(', ') : null].filter(Boolean).join(' · ')
               return (
               <div key={v.id} className="flex items-center gap-4 px-5 py-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <code className="text-sm font-semibold text-indigo-700">{'{' + v.name + '}'}</code>
                     <Badge color={v.var_type === 'continuous' ? 'blue' : 'purple'}>{v.var_type}</Badge>
-                    {isUsed && <span className="text-xs text-green-600 font-medium">used in questions</span>}
+                    {where
+                      ? <span className="text-xs text-green-700">used in {where}</span>
+                      : <span className="text-xs text-amber-700">not used anywhere yet</span>}
                   </div>
                   <p className="text-xs text-gray-500 mt-0.5 truncate">{distSummary(v)}</p>
                 </div>
                 <div className="flex gap-2 shrink-0">
                   <Button size="sm" variant="outline" onClick={() => openEdit(v)}>Edit</Button>
-                  <button onClick={() => setPendingDelete(v)} className="text-gray-300 hover:text-red-500 transition-colors" title="Delete">
+                  <button onClick={() => setPendingDelete(v)} className="text-gray-500 hover:text-red-700 transition-colors" title="Delete variable">
                     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                   </button>
                 </div>

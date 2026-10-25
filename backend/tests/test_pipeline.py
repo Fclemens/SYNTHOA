@@ -176,3 +176,47 @@ async def test_enum_schema_validation(client, fake_llm):
     r = await client.post(f"/api/experiments/{e['id']}/output-schema",
                           json={"schema_json": [{"key": "x", "type": "enum"}]})
     assert r.status_code == 422
+
+
+async def test_runs_are_numbered_named_and_labelled(client, fake_llm):
+    a = await make_audience(client)
+    e = await make_experiment(client, a["id"])
+    r1 = await launch(client, e["id"], n=2)
+    r2 = await launch(client, e["id"], n=2)
+    assert (r1["run_number"], r2["run_number"]) == (1, 2)
+    assert r2["experiment_name"] == "Pricing test" and r2["execution_mode"] == "pooled"
+    r = await client.patch(f"/api/runs/{r1['id']}", json={"name": "  baseline  "})
+    assert r.json()["name"] == "baseline"
+    listed = (await client.get(f"/api/runs?experiment_id={e['id']}")).json()
+    assert {x["name"] for x in listed} == {"baseline", None}
+    assert all(x["experiment_name"] == "Pricing test" for x in listed)
+
+
+async def test_panel_check_compares_target_and_sample(client, fake_llm):
+    a = await make_audience(client, n_personas=30)
+    aud = (await client.get(f"/api/audiences/{a['id']}")).json()
+    v_age = next(v["id"] for v in aud["variables"] if v["name"] == "age")
+    await client.post(f"/api/audiences/{a['id']}/variables", json={
+        "name": "score", "var_type": "continuous", "distribution": {"type": "normal", "mean": 0, "std": 1}})
+    aud = (await client.get(f"/api/audiences/{a['id']}")).json()
+    v_score = next(v["id"] for v in aud["variables"] if v["name"] == "score")
+    await client.put(f"/api/audiences/{a['id']}/correlations",
+                     json={"correlations": [{"var_a_id": v_age, "var_b_id": v_score, "correlation": 0.6}]})
+    await client.post(f"/api/audiences/{a['id']}/sample/fresh", json={"n": 200, "backstory_mode": "none"})
+
+    check = (await client.get(f"/api/audiences/{a['id']}/panel-check")).json()
+    assert check["n_personas"] == 200
+    by_name = {v["name"]: v for v in check["variables"]}
+    region = by_name["region"]
+    assert region["kind"] == "categorical" and len(region["categories"]) == 3
+    assert abs(sum(c["actual"] for c in region["categories"]) - 1) < 1e-6
+    age = by_name["age"]
+    assert age["kind"] == "numeric" and len(age["bins"]) == 12
+    assert abs(age["actual_mean"] - age["target_mean"]) < 4
+    corr = check["correlations"][0]
+    assert corr["target"] == 0.6 and corr["actual"] > 0.3
+
+
+async def test_provider_test_endpoint(client, fake_llm):
+    r = (await client.post("/api/settings/test-provider", json={"provider": "openai", "model": "gpt-6-luna"})).json()
+    assert r["ok"] is True and "latency_ms" in r

@@ -111,3 +111,38 @@ async def update_settings(body: AppSettingsUpdate):
     if patch:
         save_overrides(patch)
     return await get_settings()
+
+
+# ── Provider checks ───────────────────────────────────────────────────────────
+
+class ProviderTest(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+    provider: Literal["openai", "lmstudio", "anthropic"]
+    model: str
+
+
+@router.post("/test-provider")
+async def test_provider(body: ProviderTest):
+    """Send a tiny request with the current keys/URL so misconfiguration shows up before a run."""
+    import time
+    from ..services.llm_client import call_llm
+    started = time.monotonic()
+    try:
+        text, tin, tout = await call_llm(
+            "Reply with the single word OK.", model=body.model, provider=body.provider, max_tokens=16,
+        )
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:500]}
+    return {"ok": True, "latency_ms": round((time.monotonic() - started) * 1000), "reply": text.strip()[:80]}
+
+
+@router.get("/provider-models")
+async def provider_models(provider: Literal["openai", "lmstudio", "anthropic"]):
+    """Model IDs the provider reports (e.g. what LM Studio currently has loaded)."""
+    from ..services.llm_client import _get_anthropic_client, _get_openai_client
+    try:
+        client = _get_anthropic_client() if provider == "anthropic" else _get_openai_client(provider)
+        page = await client.models.list()
+        return {"models": sorted(m.id for m in page.data)}
+    except Exception as e:
+        return {"models": [], "error": str(e)[:500]}

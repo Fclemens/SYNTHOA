@@ -2,6 +2,7 @@
 
 import { useEffect, useState, Suspense, useMemo } from 'react'
 import Link from 'next/link'
+import { Breadcrumbs } from '@/components/ui/Breadcrumbs'
 import { useSearchParams } from 'next/navigation'
 import {
   api,
@@ -13,7 +14,7 @@ import {
   SimulationRun,
   Experiment,
 } from '@/lib/api'
-import { fmtCost } from '@/lib/utils'
+import { fmtCost, runDetails, runLabel } from '@/lib/utils'
 import { welchTTest, cramersV, toNumbers, pBadge, cohenLabel } from '@/lib/stats'
 
 function Spin({ size = 4 }: { size?: number }) {
@@ -99,22 +100,26 @@ function CompareContent() {
   return (
     <div>
       {/* Header */}
+      <Breadcrumbs items={[
+        { label: 'Analysis', href: '/analysis' },
+        ...(experiment ? [{ label: experiment.name, href: `/experiments/${experiment.id}` }] : []),
+        { label: `${runLabel(runA)} vs ${runLabel(runB)}` },
+      ]} />
       <div className="mb-6">
-        <Link href="/analysis" className="text-sm text-gray-400 hover:text-gray-600 transition-colors">← Analysis</Link>
-        <h1 className="text-xl font-bold text-gray-900 mt-1">Compare Runs</h1>
-        {experiment && <p className="text-xs text-gray-400 mt-0.5">Experiment: {experiment.name}</p>}
+        <h1 className="text-2xl font-bold text-gray-900">{runLabel(runA)} <span className="text-gray-500">vs</span> {runLabel(runB)}</h1>
       </div>
 
       {/* Run headers */}
       <div className="mb-5 grid grid-cols-2 gap-3">
         {[{ label: 'Run A', run: runA, sum: sumA, color: 'indigo' }, { label: 'Run B', run: runB, sum: sumB, color: 'teal' }].map(({ label, run, sum, color }) => (
-          <div key={run.id} className={`rounded-xl border p-4 ${color === 'indigo' ? 'border-indigo-200 bg-indigo-50/40' : 'border-teal-200 bg-teal-50/40'}`}>
+          <div key={run.id} className={`rounded-xl border p-4 ${color === 'indigo' ? 'border-indigo-200 bg-indigo-50' : 'border-teal-200 bg-teal-50'}`}>
             <div className="flex items-center gap-2 mb-2">
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${color === 'indigo' ? 'bg-indigo-100 text-indigo-700' : 'bg-teal-100 text-teal-700'}`}>
                 {label}
               </span>
-              <span className="text-xs text-gray-500 font-mono">{run.id.slice(0, 8)}</span>
+              <Link href={`/analysis/${run.id}`} className="text-sm font-medium text-gray-900 hover:text-indigo-700">{runLabel(run)}</Link>
             </div>
+            <p className="mb-2 text-xs text-gray-500">{runDetails(run)}</p>
             <div className="grid grid-cols-3 gap-2 text-xs">
               <div><span className="text-gray-400">Created:</span> <span className="text-gray-700">{new Date(run.created_at).toLocaleDateString()}</span></div>
               <div><span className="text-gray-400">Model:</span> <span className="text-gray-700 font-mono">{run.model_pass1}</span></div>
@@ -128,7 +133,7 @@ function CompareContent() {
       </div>
 
       {/* Field-by-field comparison */}
-      <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+      <div className="glass rounded-[14px] overflow-hidden">
         <div className="px-5 py-3 border-b border-gray-100 bg-gray-50 flex items-center gap-3">
           <h3 className="text-sm font-medium text-gray-700">Field-by-field comparison</h3>
           <p className="text-xs text-gray-400">Rows highlighted when differences between runs are significant.</p>
@@ -195,7 +200,7 @@ function FieldCompareRow({ fieldKey, ftype, description, fA, fB, respA, respB }:
   const sig = p !== null && p < 0.05
 
   return (
-    <div className={`px-5 py-4 ${sig ? 'bg-emerald-50/30' : ''}`}>
+    <div className={`px-5 py-4 ${sig ? 'bg-emerald-50' : ''}`}>
       <div className="flex items-start justify-between mb-3">
         <div>
           <h4 className="text-sm font-semibold text-gray-900">{description}</h4>
@@ -258,7 +263,7 @@ function CompareCell({ field, color }: { field: FieldSummary | undefined; color:
   if (isNumeric) {
     const f = field as FieldSummaryScale
     return (
-      <div className={`rounded-lg border ${ringColor} bg-white px-3 py-2`}>
+      <div className={`rounded-lg border ${ringColor} bg-panel-strong px-3 py-2`}>
         <div className="flex items-center gap-3">
           <div>
             <div className={`text-xl font-bold ${color === 'indigo' ? 'text-indigo-600' : 'text-teal-600'}`}>{f.mean ?? '—'}</div>
@@ -275,7 +280,7 @@ function CompareCell({ field, color }: { field: FieldSummary | undefined; color:
   if (isBool) {
     const f = field as FieldSummaryBoolean
     return (
-      <div className={`rounded-lg border ${ringColor} bg-white px-3 py-2`}>
+      <div className={`rounded-lg border ${ringColor} bg-panel-strong px-3 py-2`}>
         <div className={`text-xl font-bold ${color === 'indigo' ? 'text-indigo-600' : 'text-teal-600'}`}>{f.true_pct}%</div>
         <div className="text-[10px] text-gray-400">True ({f.true_count}/{f.n})</div>
       </div>
@@ -284,7 +289,7 @@ function CompareCell({ field, color }: { field: FieldSummary | undefined; color:
   if (isText) {
     const f = field as { n: number }
     return (
-      <div className={`rounded-lg border ${ringColor} bg-white px-3 py-2`}>
+      <div className={`rounded-lg border ${ringColor} bg-panel-strong px-3 py-2`}>
         <div className="text-sm text-gray-700">{f.n} responses</div>
         <div className="text-xs text-gray-400">Open-ended — see detail view</div>
       </div>
@@ -294,7 +299,7 @@ function CompareCell({ field, color }: { field: FieldSummary | undefined; color:
   const f = field as FieldSummaryChoice
   const entries = Object.entries(f.distribution).slice(0, 3)
   return (
-    <div className={`rounded-lg border ${ringColor} bg-white px-3 py-2 space-y-0.5`}>
+    <div className={`rounded-lg border ${ringColor} bg-panel-strong px-3 py-2 space-y-0.5`}>
       {entries.map(([opt, v]) => (
         <div key={opt} className="flex items-center justify-between text-xs">
           <span className="text-gray-700 truncate max-w-[60%]">{opt}</span>

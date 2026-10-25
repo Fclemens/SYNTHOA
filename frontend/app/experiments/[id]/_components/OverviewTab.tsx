@@ -1,36 +1,45 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { api, Experiment } from '@/lib/api'
-import { Button } from '@/components/ui/Button'
-import { Badge } from '@/components/ui/Badge'
+import Link from 'next/link'
+import { api, Audience, Experiment } from '@/lib/api'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
+import { UnsavedBar } from '@/components/ui/UnsavedBar'
 import { useToast } from '@/components/ui/Toast'
+import { tokenReport } from './tokens'
+
+const inputCls = 'mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-300'
+const labelCls = 'block text-[11px] font-medium uppercase tracking-[0.06em] text-gray-500'
+
+type Form = Pick<Experiment, 'audience_id' | 'global_context' | 'execution_mode' | 'drift_detection_enabled'>
+
+const fromExperiment = (e: Experiment): Form => ({
+  audience_id: e.audience_id,
+  global_context: e.global_context ?? '',
+  execution_mode: e.execution_mode,
+  drift_detection_enabled: e.drift_detection_enabled ?? true,
+})
 
 // ── Overview Tab ─────────────────────────────────────────────────────────────
 
 export function OverviewTab({ experiment, onSaved }: { experiment: Experiment; onSaved: () => void }) {
   const { toast } = useToast()
-  const [editing, setEditing] = useState(false)
+  const [audiences, setAudiences] = useState<Audience[]>([])
+  const [form, setForm] = useState<Form>(fromExperiment(experiment))
   const [saving, setSaving] = useState(false)
-  const [audiences, setAudiences] = useState<{ id: string; name: string }[]>([])
-  const [form, setForm] = useState({
-    audience_id: experiment.audience_id,
-    name: experiment.name,
-    global_context: experiment.global_context ?? '',
-    execution_mode: experiment.execution_mode,
-    drift_detection_enabled: experiment.drift_detection_enabled ?? true,
-  })
 
-  useEffect(() => {
-    api.listAudiences().then(list => setAudiences(list)).catch(() => {})
-  }, [])
+  useEffect(() => { api.listAudiences().then(setAudiences).catch(() => {}) }, [])
+  useEffect(() => { setForm(fromExperiment(experiment)) }, [experiment])
+
+  const saved = fromExperiment(experiment)
+  const dirty = (Object.keys(form) as (keyof Form)[]).some(k => form[k] !== saved[k])
+  const audience = audiences.find(a => a.id === form.audience_id)
+  const unknown = tokenReport({ ...experiment, global_context: form.global_context }).unknown.filter(u => u.where === 'context')
 
   async function handleSave() {
     try {
       setSaving(true)
       await api.updateExperiment(experiment.id, form)
       toast('Saved', 'success')
-      setEditing(false)
       onSaved()
     } catch (e: unknown) {
       toast(e instanceof Error ? e.message : 'Save failed', 'error')
@@ -39,130 +48,63 @@ export function OverviewTab({ experiment, onSaved }: { experiment: Experiment; o
     }
   }
 
-  const currentAudienceName = audiences.find(a => a.id === experiment.audience_id)?.name ?? experiment.audience_id
-
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <h2 className="font-semibold text-gray-800">Experiment Details</h2>
-          {!editing ? (
-            <Button size="sm" variant="outline" onClick={() => setEditing(true)}>Edit</Button>
-          ) : (
-            <div className="flex gap-2">
-              <Button size="sm" variant="secondary" onClick={() => setEditing(false)}>Cancel</Button>
-              <Button size="sm" loading={saving} onClick={handleSave}>Save</Button>
-            </div>
-          )}
-        </div>
-      </CardHeader>
-      <CardBody className="space-y-4">
-        <div>
-          <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Audience</label>
-          {editing ? (
-            <select
-              value={form.audience_id}
-              onChange={e => setForm(f => ({ ...f, audience_id: e.target.value }))}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-            >
-              {audiences.map(a => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
-          ) : (
-            <p className="text-gray-900">{currentAudienceName}</p>
-          )}
-        </div>
-
-        <div>
-          <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Name</label>
-          {editing ? (
-            <input
-              type="text"
-              value={form.name}
-              onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-            />
-          ) : (
-            <p className="text-gray-900">{experiment.name}</p>
-          )}
-        </div>
-
-        <div>
-          <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Execution Mode</label>
-          {editing ? (
-            <>
-              <select
-                value={form.execution_mode}
-                onChange={e => setForm(f => ({ ...f, execution_mode: e.target.value as 'pooled' | 'dedicated' }))}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              >
-                <option value="pooled">Pooled — all questions in one LLM call (fast, cheaper)</option>
-                <option value="dedicated">Dedicated — one LLM call per question, multi-turn interview (realistic, costlier)</option>
+    <div className="space-y-6">
+      <Card>
+        <CardHeader><h2 className="font-semibold text-gray-900">Setup</h2></CardHeader>
+        <CardBody className="space-y-5">
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+            <div>
+              <label className={labelCls}>Audience</label>
+              <select value={form.audience_id} onChange={e => setForm(f => ({ ...f, audience_id: e.target.value }))} className={inputCls}>
+                {audiences.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
               </select>
-            </>
-          ) : (
-            <div className="flex items-center gap-2 flex-wrap">
-              <Badge color={experiment.execution_mode === 'pooled' ? 'blue' : 'purple'}>
-                {experiment.execution_mode}
-              </Badge>
-              <span className="text-xs text-gray-400">
-                {experiment.execution_mode === 'pooled'
-                  ? 'All questions in one LLM call'
-                  : 'One LLM call per question, multi-turn interview'}
-              </span>
+              {audience && (
+                <p className="mt-1 text-xs text-gray-500">
+                  {audience.persona_count ?? 0} personas · {audience.variables.length} variables ·{' '}
+                  <Link href={`/audiences/${audience.id}`} className="text-indigo-400 hover:underline">open audience</Link>
+                </p>
+              )}
             </div>
-          )}
-        </div>
-
-        {(editing ? form.execution_mode === 'dedicated' : experiment.execution_mode === 'dedicated') && (
-          <div>
-            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
-              Drift Detection
-              <span className="ml-1 normal-case font-normal text-gray-400">(dedicated mode only)</span>
-            </label>
-            {editing ? (
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={form.drift_detection_enabled}
-                  onChange={e => setForm(f => ({ ...f, drift_detection_enabled: e.target.checked }))}
-                  className="rounded border-gray-300 text-indigo-600"
-                />
-                <span>Enabled — inject adherence checkpoints every 3 questions</span>
-              </label>
-            ) : (
-              <div className="flex items-center gap-2">
-                <Badge color={experiment.drift_detection_enabled ? 'green' : 'gray'}>
-                  {experiment.drift_detection_enabled ? 'Enabled' : 'Disabled'}
-                </Badge>
-                <span className="text-xs text-gray-400">
-                  {experiment.drift_detection_enabled
-                    ? 'Adds ~2 LLM calls every 3 questions to score persona adherence'
-                    : 'No extra calls — faster and cheaper, no adherence scoring'}
-                </span>
-              </div>
-            )}
+            <div>
+              <label className={labelCls}>Interview mode</label>
+              <select value={form.execution_mode}
+                onChange={e => setForm(f => ({ ...f, execution_mode: e.target.value as Form['execution_mode'] }))} className={inputCls}>
+                <option value="pooled">Pooled — all questions in one call (fast, cheaper)</option>
+                <option value="dedicated">Dedicated — one turn per question (realistic, costlier)</option>
+              </select>
+              {form.execution_mode === 'dedicated' && (
+                <label className="mt-2 flex items-center gap-2 text-sm text-gray-700">
+                  <input type="checkbox" checked={form.drift_detection_enabled}
+                    onChange={e => setForm(f => ({ ...f, drift_detection_enabled: e.target.checked }))} />
+                  Drift detection <span className="text-xs text-gray-500">(checks the persona stays in character every 3 questions; adds calls)</span>
+                </label>
+              )}
+            </div>
           </div>
-        )}
 
-        <div>
-          <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Global Context</label>
-          {editing ? (
+          <div>
+            <label className={labelCls}>Context shown before the questions</label>
             <textarea
               value={form.global_context}
               onChange={e => setForm(f => ({ ...f, global_context: e.target.value }))}
               rows={5}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              placeholder="Background context shown at the start of each interview…"
+              className={inputCls}
+              placeholder="e.g. A company offers an e-bike subscription at {price} per month, including maintenance."
             />
-          ) : (
-            <p className="text-sm text-gray-700 whitespace-pre-wrap">
-              {experiment.global_context || <span className="text-gray-400 italic">None</span>}
+            <p className="mt-1 text-xs text-gray-500">
+              Use <code>{'{variable}'}</code> to insert an experiment variable. Every respondent reads this before answering.
             </p>
-          )}
-        </div>
-      </CardBody>
-    </Card>
+            {unknown.length > 0 && (
+              <p className="mt-1 text-xs text-amber-700">
+                Not defined as variables: {unknown.map(u => `{${u.token}}`).join(', ')} — they would be sent literally.
+              </p>
+            )}
+          </div>
+        </CardBody>
+      </Card>
+
+      <UnsavedBar dirty={dirty} saving={saving} onSave={handleSave} onDiscard={() => setForm(saved)} />
+    </div>
   )
 }

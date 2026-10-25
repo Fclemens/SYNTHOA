@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { useToast } from '@/components/ui/Toast'
+import { ModelPicker } from '@/components/ModelPicker'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -54,6 +55,41 @@ const STEPS: StepMeta[] = [
   },
 ]
 
+// ── Connection test ───────────────────────────────────────────────────────────
+
+/** Sends a tiny request with the saved keys/URL; for LM Studio also lists the loaded models. */
+function StepTest({ provider, model, onModels }: {
+  provider: string; model: string; onModels: (provider: string, models: string[]) => void
+}) {
+  const [state, setState] = useState<{ busy: boolean; msg?: string; ok?: boolean }>({ busy: false })
+
+  async function run() {
+    setState({ busy: true })
+    try {
+      const listed = await api.providerModels(provider)
+      if (listed.models.length) onModels(provider, listed.models)
+      if (!model) { setState({ busy: false, ok: !!listed.models.length, msg: listed.models.length ? `${listed.models.length} models available` : (listed.error ?? 'No models found') }); return }
+      const r = await api.testProvider(provider, model)
+      setState({
+        busy: false, ok: r.ok,
+        msg: r.ok ? `Connected · ${r.latency_ms} ms${listed.models.length ? ` · ${listed.models.length} models listed` : ''}` : r.error,
+      })
+    } catch (e: unknown) {
+      setState({ busy: false, ok: false, msg: e instanceof Error ? e.message : 'Test failed' })
+    }
+  }
+
+  return (
+    <div className="mt-2 flex items-center gap-3">
+      <button type="button" onClick={run} disabled={state.busy}
+        className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:border-indigo-300 hover:text-gray-900 disabled:opacity-50">
+        {state.busy ? 'Testing…' : 'Test connection'}
+      </button>
+      {state.msg && <span className={`truncate text-xs ${state.ok ? 'text-green-700' : 'text-red-700'}`} title={state.msg}>{state.msg}</span>}
+    </div>
+  )
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
@@ -62,6 +98,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [modelOptions, setModelOptions] = useState<string[]>([])
+  const [providerModels, setProviderModels] = useState<Record<string, string[]>>({})
 
   // Form state — write-only key fields start empty (never pre-filled)
   const [form, setForm] = useState<Record<string, unknown>>({})
@@ -122,20 +159,20 @@ export default function SettingsPage() {
     setForm(f => ({ ...f, [key]: value }))
 
   const inputCls = 'mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500'
-  const selectCls = 'mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white'
+  const selectCls = 'mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-panel-strong'
   const labelCls = 'block text-sm font-medium text-gray-700'
   const helpCls = 'mt-1 text-xs text-gray-400'
 
   if (loading) return <PageSpinner />
 
   return (
-    <div className="space-y-8 max-w-2xl">
+    <div className="space-y-8 max-w-3xl">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
         <p className="mt-1 text-sm text-gray-500">
           Configure providers and models per pipeline step. Changes persist to{' '}
           <code className="rounded bg-gray-100 px-1 py-0.5 text-xs">settings_override.json</code>{' '}
-          and take effect immediately without restart.
+          and take effect immediately without restart. &ldquo;Test connection&rdquo; uses the saved keys — save first if you changed them.
         </p>
       </div>
 
@@ -189,17 +226,19 @@ export default function SettingsPage() {
                     </div>
                     <div>
                       <label className={labelCls}>Model</label>
-                      <input
-                        type="text"
-                        list="known-models"
+                      <ModelPicker
                         value={modelVal}
-                        onChange={e => set(step.modelKey as string, e.target.value)}
-                        className={inputCls}
-                        placeholder={hasInherit ? 'leave blank to inherit' : 'e.g. gpt-6.1-sol'}
-                        autoComplete="off"
+                        onChange={v => set(step.modelKey as string, v)}
+                        options={Array.from(new Set([...(providerModels[providerVal || effProvider || ''] ?? []), ...modelOptions]))}
+                        inheritLabel={hasInherit ? '— inherit from Pass 2 —' : undefined}
                       />
                     </div>
                   </div>
+                  <StepTest
+                    provider={(providerVal || effProvider || 'openai') as string}
+                    model={(modelVal || effModel || '') as string}
+                    onModels={(prov, models) => setProviderModels(m => ({ ...m, [prov]: models }))}
+                  />
                   {hasInherit && effProvider && effModel && (
                     <p className="mt-1.5 text-xs text-indigo-500">
                       Effective: <span className="font-mono font-medium">{effProvider}</span>{' / '}
@@ -312,9 +351,10 @@ export default function SettingsPage() {
               />
               <p className={helpCls}>
                 Used when provider = <strong>Anthropic</strong>.
-                Models: <code className="rounded bg-gray-100 px-1 text-xs">claude-opus-4-5</code>,{' '}
-                <code className="rounded bg-gray-100 px-1 text-xs">claude-sonnet-4-5</code>,{' '}
-                <code className="rounded bg-gray-100 px-1 text-xs">claude-haiku-3-5</code>.
+                Models: <code className="rounded bg-gray-100 px-1 text-xs">claude-opus-5-5</code>,{' '}
+                <code className="rounded bg-gray-100 px-1 text-xs">claude-sonnet-5-5</code>,{' '}
+                <code className="rounded bg-gray-100 px-1 text-xs">claude-haiku-5-5</code>,{' '}
+                <code className="rounded bg-gray-100 px-1 text-xs">claude-fable-5-1</code>.
               </p>
             </div>
 
@@ -325,9 +365,7 @@ export default function SettingsPage() {
           <Button type="submit" loading={saving}>Save Settings</Button>
         </div>
 
-        <datalist id="known-models">
-          {modelOptions.map(m => <option key={m} value={m} />)}
-        </datalist>
+
       </form>
     </div>
   )

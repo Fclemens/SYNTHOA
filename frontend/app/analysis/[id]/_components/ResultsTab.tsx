@@ -87,7 +87,7 @@ export function CorrelationHeatmap({ fields, respondents }: { fields: FieldSumma
   const keyToLabel = Object.fromEntries(numericFields.map(f => [f.key, f.description || f.key]))
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+    <div className="glass rounded-[14px] overflow-hidden">
       <button onClick={() => setOpen(!open)}
         className="w-full px-5 py-3 bg-gray-50 border-b border-gray-100 flex items-center justify-between hover:bg-gray-100 transition-colors">
         <div className="flex items-center gap-2">

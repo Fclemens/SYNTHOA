@@ -7,6 +7,8 @@ import { Card, CardBody } from '@/components/ui/Card'
 import { Modal } from '@/components/ui/Modal'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
+import { questionTypeLabel } from '@/lib/utils'
+import { questionPreview, tokensIn } from './tokens'
 import { questionTypeColor } from './distributions'
 
 // ── Questions Tab ─────────────────────────────────────────────────────────────
@@ -22,6 +24,7 @@ export function QuestionsTab({ experiment, onChanged }: { experiment: Experiment
   const [dragOverId, setDragOverId] = useState<string | null>(null)
   const [orderedQuestions, setOrderedQuestions] = useState<Question[]>([])
   const distVars = experiment.dist_variables ?? []
+  const varNames = new Set(distVars.map(v => v.name))
 
   const [form, setForm] = useState({
     question_text: '',
@@ -220,8 +223,13 @@ export function QuestionsTab({ experiment, onChanged }: { experiment: Experiment
                 {/* Content */}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-gray-800">{q.question_text}</p>
+                  {tokensIn(q.question_text).filter(t => !varNames.has(t)).map(t => (
+                    <p key={t} className="mt-1 text-xs text-amber-700">
+                      <code>{`{${t}}`}</code> isn&apos;t a variable — it will be sent literally. Add it in the Variables tab or fix the spelling.
+                    </p>
+                  ))}
                   <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                    <Badge color={questionTypeColor(q.question_type)}>{q.question_type}</Badge>
+                    <Badge color={questionTypeColor(q.question_type)}>{questionTypeLabel(q.question_type)}</Badge>
                     {q.ask_why && <Badge color="yellow">ask why</Badge>}
                     {q.question_type === 'scale' && (
                       <span className="text-xs text-gray-500">
@@ -248,7 +256,7 @@ export function QuestionsTab({ experiment, onChanged }: { experiment: Experiment
                   </button>
                   <button
                     onClick={() => setPendingDelete(q)}
-                    className="text-gray-300 hover:text-red-500 transition-colors"
+                    className="text-gray-500 hover:text-red-700 transition-colors"
                     title="Delete question"
                   >
                     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -295,10 +303,10 @@ export function QuestionsTab({ experiment, onChanged }: { experiment: Experiment
             <select value={form.question_type}
               onChange={e => setForm(f => ({ ...f, question_type: e.target.value as Question['question_type'] }))}
               className={inputCls}>
-              <option value="open_ended">Open Ended</option>
+              <option value="open_ended">Open-ended</option>
               <option value="scale">Scale</option>
-              <option value="single_choice">Single Choice</option>
-              <option value="multiple_choice">Multiple Choice</option>
+              <option value="single_choice">Single choice</option>
+              <option value="multiple_choice">Multiple choice</option>
             </select>
           </div>
 
@@ -352,6 +360,20 @@ export function QuestionsTab({ experiment, onChanged }: { experiment: Experiment
                 className="rounded border-gray-300 text-indigo-600" />
               <span className="font-medium text-gray-700">Ask follow-up &ldquo;Why?&rdquo;</span>
             </label>
+          </div>
+
+          <div className="rounded-[10px] border border-gray-100 bg-white/[0.025] p-3">
+            <p className="mb-1.5 text-[11px] uppercase tracking-[0.06em] text-gray-500">Respondents will be asked</p>
+            <pre className="whitespace-pre-wrap font-sans text-sm text-gray-800">{questionPreview({
+              ...form,
+              choices: form.choices.split(',').map(c => c.trim()).filter(Boolean),
+            })}</pre>
+            {tokensIn(form.question_text).some(t => !varNames.has(t)) && (
+              <p className="mt-2 text-xs text-amber-700">
+                Unknown variable{tokensIn(form.question_text).filter(t => !varNames.has(t)).length > 1 ? 's' : ''}:{' '}
+                {tokensIn(form.question_text).filter(t => !varNames.has(t)).map(t => `{${t}}`).join(', ')}
+              </p>
+            )}
           </div>
 
           <div className="flex justify-end gap-3 pt-2">

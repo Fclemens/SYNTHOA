@@ -16,7 +16,7 @@ from ..models.audience import Persona
 from ..models.experiment import Experiment
 from ..models.simulation import SimulationRun, SimulationTask
 from ..schemas.simulation import (
-    LaunchRequest, ReExtractRequest,
+    LaunchRequest, ReExtractRequest, RunUpdate,
     SimulationRunOut, SimulationTaskDetail, SimulationTaskSummary,
 )
 from ..services.execution import (
@@ -27,6 +27,18 @@ from ..services.interview import load_experiment_config, resolve_interview
 from ..services.sampling import sample_correlated_population
 
 router = APIRouter(prefix="/api", tags=["runs"])
+
+
+async def _with_names(runs: list[SimulationRun], db: AsyncSession) -> list[SimulationRun]:
+    """Attach experiment_name so the UI can label runs without extra requests."""
+    exp_ids = {r.experiment_id for r in runs}
+    if exp_ids:
+        names = dict((await db.execute(
+            select(Experiment.id, Experiment.name).where(Experiment.id.in_(exp_ids))
+        )).all())
+        for r in runs:
+            r.experiment_name = names.get(r.experiment_id)
+    return runs
 
 
 # ── List runs ────────────────────────────────────────────────────────────────
@@ -42,7 +54,7 @@ async def list_runs(
     if experiment_id:
         q = q.where(SimulationRun.experiment_id == experiment_id)
     result = await db.execute(q)
-    return result.scalars().all()
+    return await _with_names(list(result.scalars().all()), db)
 
 
 # ── Launch ────────────────────────────────────────────────────────────────────
@@ -102,9 +114,13 @@ async def launch_simulation(
         "provider_pass2": settings.provider_pass2,
     }
 
+    previous = await db.scalar(
+        select(func.max(SimulationRun.run_number)).where(SimulationRun.experiment_id == experiment_id)
+    )
     run = SimulationRun(
         id=str(uuid.uuid4()),
         experiment_id=experiment_id,
+        run_number=(previous or 0) + 1,
         model_pass1=model_pass1,
         model_pass2=model_pass2,
         status="pending",
@@ -122,7 +138,7 @@ async def launch_simulation(
     await db.refresh(run)
 
     background_tasks.add_task(launch_run, run.id)
-    return run
+    return (await _with_names([run], db))[0]
 
 
 # ── Run status & tasks ────────────────────────────────────────────────────────
@@ -132,7 +148,18 @@ async def get_run(run_id: str, db: AsyncSession = Depends(get_db)):
     run = await db.get(SimulationRun, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-    return run
+    return (await _with_names([run], db))[0]
+
+
+@router.patch("/runs/{run_id}", response_model=SimulationRunOut)
+async def rename_run(run_id: str, body: RunUpdate, db: AsyncSession = Depends(get_db)):
+    run = await db.get(SimulationRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    run.name = (body.name or "").strip() or None
+    await db.commit()
+    await db.refresh(run)
+    return (await _with_names([run], db))[0]
 
 
 @router.get("/runs/{run_id}/progress")
@@ -182,6 +209,9 @@ async def get_task(run_id: str, task_id: str, db: AsyncSession = Depends(get_db)
     task = await db.get(SimulationTask, task_id)
     if not task or task.run_id != run_id:
         raise HTTPException(status_code=404, detail="Task not found")
+    persona = await db.get(Persona, task.persona_id)
+    task.persona_traits = persona.traits_json if persona else {}
+    task.persona_backstory = persona.backstory if persona else None
     return task
 
 

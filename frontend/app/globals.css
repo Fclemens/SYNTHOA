@@ -1,3 +1,63 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Bundled for offline use (Latin subset, from Google Fonts).
+   Space Grotesk and IBM Plex Mono: SIL Open Font License 1.1, see public/fonts/OFL-*.txt. */
+@font-face {
+  font-family: "Space Grotesk"; font-style: normal; font-weight: 300 700; font-display: swap;
+  src: url("/fonts/SpaceGrotesk-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono"; font-style: normal; font-weight: 400; font-display: swap;
+  src: url("/fonts/IBMPlexMono-400-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono"; font-style: normal; font-weight: 500; font-display: swap;
+  src: url("/fonts/IBMPlexMono-500-latin.woff2") format("woff2");
+}
+
+:root { color-scheme: dark; }  /* native controls: selects, scrollbars, date pickers */
+
+body {
+  min-height: 100vh;
+  background-color: #0c0a14;
+  background-image:
+    radial-gradient(ellipse 60% 50% at 0% 0%, rgba(124, 58, 237, 0.22) 0%, transparent 70%),
+    radial-gradient(ellipse 55% 45% at 100% 100%, rgba(79, 70, 229, 0.18) 0%, transparent 70%),
+    radial-gradient(ellipse 40% 35% at 70% 10%, rgba(192, 38, 211, 0.07) 0%, transparent 70%),
+    linear-gradient(160deg, #0f0b1c 0%, #0c0a14 50%, #0a0912 100%);
+  background-attachment: fixed;
+}
+
+::selection { background: rgba(139, 92, 246, 0.45); }
+* { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.14) transparent; }
+
+@layer base {
+  input, select, textarea { background-color: #14111f; color: #ece8f7; }
+  input::placeholder, textarea::placeholder { color: rgba(155, 148, 179, 0.6); }
+  input[type="checkbox"], input[type="radio"] { accent-color: #8b5cf6; }
+  input[type="range"] {
+    -webkit-appearance: none; appearance: none; height: 6px; border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08); accent-color: #8b5cf6;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
+    background: #a78bfa; box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.25); cursor: pointer;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 14px; height: 14px; border: 0; border-radius: 50%; background: #a78bfa; cursor: pointer;
+  }
+  option { background-color: #1c1830; }
+}
+
+@layer components {
+  /* Glass panel used by cards, the sidebar and modals */
+  .glass {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.035) 0%, rgba(255, 255, 255, 0.01) 100%),
+      rgba(25, 21, 40, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(14px);
+  }
+}
