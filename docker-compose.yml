@@ -25,6 +25,7 @@ services:
       LMSTUDIO_BASE_URL: ${LMSTUDIO_BASE_URL:-http://127.0.0.1:1234/v1}
       MAX_CONCURRENT_TASKS: ${MAX_CONCURRENT_TASKS:-10}
       TPM_LIMIT: ${TPM_LIMIT:-2000000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
 
   frontend:
     build:

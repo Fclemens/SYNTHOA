@@ -63,34 +63,6 @@ class SimulationTaskDetail(SimulationTaskSummary):
     pass2_error: Optional[str]
 
 
-# ── Calibration ───────────────────────────────────────────────────────────────
-
-class CalibrateRequest(BaseModel):
-    question_id: str    # identifies the question → used for type / scale_min / scale_max
-    field_key: str      # output schema field key → used to look up extracted_json values
-    real_responses: list[Any]
-
-
-class CalibrationBenchmarkOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    id: str
-    experiment_id: str
-    question_id: str
-    js_divergence: float
-    sample_size_real: int
-    sample_size_synthetic: int
-    created_at: datetime
-
-
-class CalibrationStatusOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    experiment_id: str
-    level: str  # "uncalibrated" | "directional" | "calibrated"
-    last_calibrated: Optional[datetime]
-    notes: Optional[str]
-    benchmarks: list[CalibrationBenchmarkOut] = []
-
-
 # ── Re-extract ────────────────────────────────────────────────────────────────
 
 class ReExtractRequest(BaseModel):

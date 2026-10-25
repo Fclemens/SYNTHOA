@@ -4,8 +4,9 @@ Builds the final LLM payloads for pooled and dedicated interview modes.
 Includes token estimation with truncation guard.
 """
 from __future__ import annotations
+import functools
 import logging
-from typing import Any
+from typing import Any, Optional
 
 import tiktoken
 
@@ -13,26 +14,44 @@ from ..config import settings
 
 logger = logging.getLogger(__name__)
 
+DEDICATED_INSTRUCTIONS = (
+    "You are in a research interview. Answer each question naturally and conversationally. "
+    "Wait for each question before responding."
+)
 
-def _get_encoder(model: str) -> tiktoken.Encoding:
+
+@functools.lru_cache(maxsize=None)
+def _get_encoder(model: str) -> Optional[tiktoken.Encoding]:
+    """
+    tiktoken downloads encodings on first use; offline installs (or blocked
+    networks) fall back to a ~4 chars/token heuristic instead of failing calls.
+    """
     try:
-        return tiktoken.encoding_for_model(model)
-    except KeyError:
-        return tiktoken.get_encoding("cl100k_base")
+        try:
+            return tiktoken.encoding_for_model(model)
+        except KeyError:
+            return tiktoken.get_encoding("o200k_base")
+    except Exception as e:
+        logger.warning(f"tiktoken unavailable ({e.__class__.__name__}); estimating tokens from length")
+        return None
+
+
+def _count(text: str, model: str) -> int:
+    enc = _get_encoder(model)
+    return len(enc.encode(text)) if enc else len(text) // 4 + 1
 
 
 def estimate_message_tokens(messages: list[dict[str, str]], model: str) -> int:
-    enc = _get_encoder(model)
     total = 0
     for msg in messages:
         total += 4  # per-message overhead
-        total += len(enc.encode(msg.get("content", "")))
+        total += _count(msg.get("content", ""), model)
     total += 2  # reply primer
     return total
 
 
-def _truncate_if_needed(messages: list[dict[str, str]], model: str) -> list[dict[str, str]]:
-    """If token count exceeds MAX_CONTEXT_TOKENS, trim the first system message."""
+def truncate_if_needed(messages: list[dict[str, str]], model: str) -> list[dict[str, str]]:
+    """If token count exceeds max_context_tokens, trim the first (system/backstory) message."""
     total = estimate_message_tokens(messages, model)
     if total <= settings.max_context_tokens:
         return messages
@@ -43,58 +62,66 @@ def _truncate_if_needed(messages: list[dict[str, str]], model: str) -> list[dict
     )
     enc = _get_encoder(model)
     budget = settings.max_context_tokens - total  # negative = how much to cut
-
-    # Truncate the system/first message
-    if messages and messages[0]["role"] in ("system", "user"):
-        tokens = enc.encode(messages[0]["content"])
-        keep = max(100, len(tokens) + budget)
-        messages[0] = {
-            **messages[0],
-            "content": enc.decode(tokens[:keep]) + "\n[...truncated for context window...]",
-        }
+    messages = list(messages)
+    content = messages[0]["content"]
+    if enc:
+        tokens = enc.encode(content)
+        content = enc.decode(tokens[:max(100, len(tokens) + budget)])
+    else:
+        content = content[:max(400, len(content) + budget * 4)]
+    messages[0] = {**messages[0], "content": content + "\n[...truncated for context window...]"}
     return messages
+
+
+def format_question(q: dict[str, Any], *, pooled: bool) -> str:
+    """
+    Render one resolved question with its answer format (scale range + anchors,
+    choices, reasoning request). Shared by pooled and dedicated modes so both
+    tell the respondent exactly the same thing.
+    """
+    indent = "  " if pooled else ""
+    lines = [f"Q{q['sort_order']}: {q['text']}" if pooled else q["text"]]
+
+    if q["type"] == "scale":
+        lo = q.get("scale_min") if q.get("scale_min") is not None else 1
+        hi = q.get("scale_max") if q.get("scale_max") is not None else 10
+        anchors = []
+        if q.get("scale_anchor_low"):
+            anchors.append(f'{lo} = "{q["scale_anchor_low"]}"')
+        if q.get("scale_anchor_high"):
+            anchors.append(f'{hi} = "{q["scale_anchor_high"]}"')
+        where = f", where {' and '.join(anchors)}" if anchors else ""
+        lines.append(f"{indent}(Answer on a scale of {lo} to {hi}{where})")
+    elif q["type"] == "single_choice" and q.get("choices"):
+        lines.append(f"{indent}Select ONE option: {', '.join(q['choices'])}")
+    elif q["type"] == "multiple_choice" and q.get("choices"):
+        lines.append(f"{indent}Options (select all that apply): {', '.join(q['choices'])}")
+
+    if q.get("ask_why"):
+        lines.append(
+            f"{indent}IMPORTANT: Before giving your answer, explain your reasoning step by step."
+            if pooled else "Please think through your reasoning before answering."
+        )
+    return "\n".join(lines)
 
 
 def build_pooled_prompt(
     backstory: str,
     global_context: str,
-    questions: list[dict[str, Any]],  # resolved question dicts: {text, type, ask_why, scale_min, scale_max, choices}
-    model: str = "gpt-4o",
+    questions: list[dict[str, Any]],
+    model: str,
 ) -> tuple[list[dict[str, str]], str]:
     """
     Build a single-turn pooled prompt.
     Returns (messages, assembled_text_for_audit).
     """
-    q_lines = []
-    for q in questions:
-        line = f"Q{q['sort_order']}: {q['text']}"
-        if q["type"] == "scale":
-            lo, hi = q.get('scale_min', 1), q.get('scale_max', 10)
-            anchor_lo = q.get('scale_anchor_low', '')
-            anchor_hi = q.get('scale_anchor_high', '')
-            if anchor_lo and anchor_hi:
-                line += f"\n  (Answer on a scale of {lo} to {hi}, where {lo} = \"{anchor_lo}\" and {hi} = \"{anchor_hi}\")"
-            elif anchor_lo:
-                line += f"\n  (Answer on a scale of {lo} to {hi}, where {lo} = \"{anchor_lo}\")"
-            elif anchor_hi:
-                line += f"\n  (Answer on a scale of {lo} to {hi}, where {hi} = \"{anchor_hi}\")"
-            else:
-                line += f"\n  (Answer on a scale of {lo} to {hi})"
-        elif q["type"] == "single_choice" and q.get("choices"):
-            line += f"\n  Select ONE option: {', '.join(q['choices'])}"
-        elif q["type"] == "multiple_choice" and q.get("choices"):
-            line += f"\n  Options (select all that apply): {', '.join(q['choices'])}"
-        if q.get("ask_why"):
-            line += "\n  IMPORTANT: Before giving your answer, explain your reasoning step by step."
-        q_lines.append(line)
-
+    q_lines = [format_question(q, pooled=True) for q in questions]
     format_example = "\n".join(
         f"Q{q['sort_order']}_REASONING: <your reasoning if asked>\n"
         f"Q{q['sort_order']}_ANSWER: <your answer>\n"
         f"Q{q['sort_order']}_MOTIVATION: <brief explanation>"
         for q in questions
     )
-
     user_content = (
         f"{global_context}\n\n"
         "---\n"
@@ -109,57 +136,33 @@ def build_pooled_prompt(
     if backstory:
         messages.append({"role": "system", "content": backstory})
     messages.append({"role": "user", "content": user_content})
-    messages = _truncate_if_needed(messages, model)
+    messages = truncate_if_needed(messages, model)
     system_part = messages[0]["content"] if messages[0]["role"] == "system" else ""
     user_part = messages[-1]["content"]
     assembled = f"[SYSTEM]\n{system_part}\n\n[USER]\n{user_part}" if system_part else f"[USER]\n{user_part}"
     return messages, assembled
 
 
-def build_dedicated_messages(
+def dedicated_system_prompt(backstory: str, global_context: str) -> str:
+    backstory_part = f"{backstory}\n\n" if backstory else ""
+    return f"{backstory_part}{global_context}\n\n{DEDICATED_INSTRUCTIONS}"
+
+
+def estimate_dedicated_tokens(
     backstory: str,
     global_context: str,
     questions: list[dict[str, Any]],
-    model: str = "gpt-4o",
-) -> list[list[dict[str, str]]]:
-    """
-    Build the per-turn message lists for dedicated (interview) mode.
-    Returns a list of message snapshots — one per question turn.
-    Each snapshot is the full messages array to send for that turn.
-    The caller appends the assistant response between turns.
-    """
-    backstory_part = f"{backstory}\n\n" if backstory else ""
-    system_content = (
-        f"{backstory_part}"
-        f"{global_context}\n\n"
-        "You are in a research interview. Answer each question naturally and conversationally. "
-        "Wait for each question before responding."
-    )
-    system_msg = {"role": "system", "content": system_content}
-
-    turn_snapshots = []
-    history: list[dict[str, str]] = [system_msg]
-
+    model: str,
+    answer_tokens: int = 120,
+) -> int:
+    """Sum of input tokens across all turns (the conversation grows each turn)."""
+    history: list[dict[str, str]] = [
+        {"role": "system", "content": dedicated_system_prompt(backstory, global_context)}
+    ]
+    total = 0
+    placeholder_answer = "x " * answer_tokens
     for q in questions:
-        q_text = q["text"]
-        if q["type"] == "scale":
-            lo, hi = q.get('scale_min', 1), q.get('scale_max', 10)
-            anchor_lo, anchor_hi = q.get('scale_anchor_low', ''), q.get('scale_anchor_high', '')
-            if anchor_lo and anchor_hi:
-                q_text += f"\n(Answer on a scale of {lo} to {hi}, where {lo} = \"{anchor_lo}\" and {hi} = \"{anchor_hi}\")"
-            else:
-                q_text += f"\n(Answer on a scale of {lo} to {hi})"
-        elif q["type"] == "single_choice" and q.get("choices"):
-            q_text += f"\nSelect ONE option: {', '.join(q['choices'])}"
-        elif q["type"] == "multiple_choice" and q.get("choices"):
-            q_text += f"\nOptions (select all that apply): {', '.join(q['choices'])}"
-        if q.get("ask_why"):
-            q_text += "\nPlease think through your reasoning before answering."
-
-        history = history + [{"role": "user", "content": q_text}]
-        snapshot = _truncate_if_needed(list(history), model)
-        turn_snapshots.append(snapshot)
-        # Caller will append assistant response here — we return snapshots only
-        history = history + [{"role": "assistant", "content": "__PENDING__"}]
-
-    return turn_snapshots
+        history.append({"role": "user", "content": format_question(q, pooled=False)})
+        total += estimate_message_tokens(history, model)
+        history.append({"role": "assistant", "content": placeholder_answer})
+    return total

@@ -14,6 +14,11 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Bake the tokenizer into the image so token estimates work without internet access
+ENV TIKTOKEN_CACHE_DIR=/opt/tiktoken
+RUN python -c "import tiktoken; tiktoken.get_encoding('o200k_base'); tiktoken.get_encoding('cl100k_base')" \
+    && chmod -R a+r /opt/tiktoken
+
 # Copy app code and default prompt templates
 COPY app ./app
 COPY prompts ./prompts-default

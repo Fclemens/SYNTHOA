@@ -5,11 +5,10 @@ from typing import Any, List
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
-from sqlalchemy import select, delete
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..config import settings
 from ..database import get_db
 from ..models.audience import (
     Audience, AudienceVariable, ConditionalRule, Persona, SamplingJob, VariableCorrelation,
@@ -22,25 +21,51 @@ from ..schemas.audience import (
     PersonaOut, SampleRequest, SamplingJobOut,
     AudienceExportBundle, AudienceImportResult,
 )
-from ..services.backstory import generate_backstory
-from ..services.sampling import sample_correlated_population
+from ..models.experiment import Experiment
+from ..models.simulation import SimulationTask
 from ..services.sampling_jobs import run_sampling_job
-from ..services.validation import validate_persona, validate_persona_llm
 
 router = APIRouter(prefix="/api/audiences", tags=["audiences"])
 
 
+def _active(audience_id: str):
+    return (Persona.audience_id == audience_id) & Persona.archived.is_(False)
+
+
+async def _attach_persona_counts(audiences: list[Audience], db: AsyncSession) -> list[Audience]:
+    """Set persona_count (active panel size) with one COUNT query instead of loading personas."""
+    if audiences:
+        rows = await db.execute(
+            select(Persona.audience_id, func.count())
+            .where(Persona.audience_id.in_([a.id for a in audiences]), Persona.archived.is_(False))
+            .group_by(Persona.audience_id)
+        )
+        counts = dict(rows.all())
+        for a in audiences:
+            a.persona_count = counts.get(a.id, 0)
+    return audiences
+
+
 async def _get_audience_full(audience_id: str, db: AsyncSession) -> Audience:
-    """Load audience with all relationships eagerly to avoid lazy-load errors."""
+    """Load audience with variables eagerly to avoid lazy-load errors."""
     result = await db.execute(
-        select(Audience)
-        .where(Audience.id == audience_id)
-        .options(selectinload(Audience.variables), selectinload(Audience.personas))
+        select(Audience).where(Audience.id == audience_id).options(selectinload(Audience.variables))
     )
     audience = result.scalars().first()
     if not audience:
         raise HTTPException(status_code=404, detail="Audience not found")
+    await _attach_persona_counts([audience], db)
     return audience
+
+
+async def _retire_personas(db: AsyncSession, *conditions) -> None:
+    """
+    Remove personas matching `conditions` from the panel: delete those no run
+    uses, archive the rest so past runs keep their respondents' traits.
+    """
+    used = select(SimulationTask.persona_id).distinct()
+    await db.execute(delete(Persona).where(*conditions, Persona.id.not_in(used)))
+    await db.execute(update(Persona).where(*conditions).values(archived=True))
 
 
 # ── Import (must be before /{audience_id} dynamic routes) ─────────────────────
@@ -125,11 +150,9 @@ async def create_audience(body: AudienceCreate, db: AsyncSession = Depends(get_d
 @router.get("", response_model=List[AudienceOut])
 async def list_audiences(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(Audience)
-        .order_by(Audience.created_at.desc())
-        .options(selectinload(Audience.variables), selectinload(Audience.personas))
+        select(Audience).order_by(Audience.created_at.desc()).options(selectinload(Audience.variables))
     )
-    return result.scalars().all()
+    return await _attach_persona_counts(list(result.scalars().all()), db)
 
 
 @router.get("/{audience_id}", response_model=AudienceOut)
@@ -192,6 +215,11 @@ async def delete_audience(audience_id: str, db: AsyncSession = Depends(get_db)):
     audience = await db.get(Audience, audience_id)
     if not audience:
         raise HTTPException(status_code=404, detail="Audience not found")
+    # Experiments (and their runs/tasks) go first: tasks reference this audience's personas.
+    experiments = (await db.execute(select(Experiment).where(Experiment.audience_id == audience_id))).scalars().all()
+    for exp in experiments:
+        await db.delete(exp)
+    await db.flush()
     await db.delete(audience)
     await db.commit()
 
@@ -229,6 +257,10 @@ async def delete_variable(audience_id: str, var_id: str, db: AsyncSession = Depe
     var = await db.get(AudienceVariable, var_id)
     if not var or var.audience_id != audience_id:
         raise HTTPException(status_code=404, detail="Variable not found")
+    await db.execute(delete(VariableCorrelation).where(
+        or_(VariableCorrelation.var_a_id == var_id, VariableCorrelation.var_b_id == var_id)
+    ))
+    await db.execute(delete(ConditionalRule).where(ConditionalRule.target_var_id == var_id))
     await db.delete(var)
     await db.commit()
 
@@ -329,10 +361,7 @@ async def sample_personas(
 
     # Determine how many to sample
     if body.reuse_existing:
-        existing_result = await db.execute(
-            select(Persona).where(Persona.audience_id == audience_id)
-        )
-        existing_count = len(existing_result.scalars().all())
+        existing_count = await db.scalar(select(func.count()).select_from(Persona).where(_active(audience_id)))
         n_needed = max(0, body.n - existing_count)
     else:
         n_needed = body.n
@@ -359,8 +388,6 @@ async def sample_personas(
         n_requested=n_needed,
         n_completed=0,
         backstory_mode=body.backstory_mode,
-        validate_plausibility=body.validate_plausibility,
-        llm_validation=body.llm_validation,
     )
     db.add(job)
     await db.commit()
@@ -377,13 +404,12 @@ async def sample_personas_fresh(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete all existing personas for this audience, then start a new sampling job."""
+    """Replace the audience's panel with a new sample (personas used by past runs are archived)."""
     audience = await db.get(Audience, audience_id)
     if not audience:
         raise HTTPException(status_code=404, detail="Audience not found")
 
-    # Delete all existing personas
-    await db.execute(delete(Persona).where(Persona.audience_id == audience_id))
+    await _retire_personas(db, _active(audience_id))
     await db.commit()
 
     job = SamplingJob(
@@ -393,8 +419,6 @@ async def sample_personas_fresh(
         n_requested=body.n,
         n_completed=0,
         backstory_mode=body.backstory_mode,
-        validate_plausibility=body.validate_plausibility,
-        llm_validation=body.llm_validation,
     )
     db.add(job)
     await db.commit()
@@ -472,7 +496,7 @@ async def resume_sampling_job(
 @router.get("/{audience_id}/personas", response_model=List[PersonaOut])
 async def list_personas(audience_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(Persona).where(Persona.audience_id == audience_id).order_by(Persona.created_at.desc())
+        select(Persona).where(_active(audience_id)).order_by(Persona.created_at.desc())
     )
     return result.scalars().all()
 
@@ -482,7 +506,7 @@ async def delete_persona(audience_id: str, persona_id: str, db: AsyncSession = D
     persona = await db.get(Persona, persona_id)
     if not persona or persona.audience_id != audience_id:
         raise HTTPException(status_code=404, detail="Persona not found")
-    await db.delete(persona)
+    await _retire_personas(db, Persona.id == persona_id)
     await db.commit()
 
 
@@ -529,7 +553,7 @@ async def export_audience(
     if include_personas:
         p_result = await db.execute(
             select(Persona)
-            .where(Persona.audience_id == audience_id)
+            .where(_active(audience_id))
             .order_by(Persona.created_at)
         )
         personas = [

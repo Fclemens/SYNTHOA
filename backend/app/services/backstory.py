@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 # ── Prompt template loading ──────────────────────────────────────────────────
 
-_PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "prompts"
+_PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"   # backend/prompts
 
 
 def _load_template(filename: str) -> str:
@@ -42,7 +42,7 @@ def _fmt_value(val: Any) -> str:
     return str(val)
 
 
-def _build_variables_list(traits: dict[str, Any]) -> str:
+def build_variables_list(traits: dict[str, Any]) -> str:
     """Build a bullet list from all traits present in the persona."""
     lines = []
     for key, value in traits.items():
@@ -53,7 +53,7 @@ def _build_variables_list(traits: dict[str, Any]) -> str:
 
 # ── Profile builder ───────────────────────────────────────────────────────────
 
-def _build_default_backstory(traits: dict[str, Any]) -> str:
+def build_default_backstory(traits: dict[str, Any]) -> str:
     """
     Build a fully generic profile from whatever variables are present.
     Loads the template from prompts/backstory_profile.txt.
@@ -65,7 +65,7 @@ def _build_default_backstory(traits: dict[str, Any]) -> str:
             "and do NOT mention that you are an AI."
         )
 
-    variables_list = _build_variables_list(traits)
+    variables_list = build_variables_list(traits)
     template = _load_template("backstory_profile.txt")
 
     if template and "{variables_list}" in template:
@@ -107,7 +107,7 @@ async def generate_backstory(
     if custom_template and custom_template.strip():
         backstory_base = _render_custom_template(custom_template, traits)
     else:
-        backstory_base = _build_default_backstory(traits)
+        backstory_base = build_default_backstory(traits)
 
     elaboration_template = _load_template("backstory_elaboration.txt")
     if elaboration_template and "{profile}" in elaboration_template:
@@ -132,15 +132,6 @@ async def generate_backstory(
         return backstory_base
 
 
-def generate_backstory_preview(traits: dict[str, Any], max_chars: int = 200) -> str:
-    """Quick preview without LLM call."""
-    parts = [
-        f"{k.replace('_', ' ').title()}: {_fmt_value(v)}"
-        for k, v in list(traits.items())[:5]
-    ]
-    return ", ".join(parts)[:max_chars]
-
-
 def generate_backstory_template(
     traits: dict[str, Any],
     custom_template: str | None = None,
@@ -151,4 +142,4 @@ def generate_backstory_template(
     """
     if custom_template and custom_template.strip():
         return _render_custom_template(custom_template, traits)
-    return _build_default_backstory(traits)
+    return build_default_backstory(traits)

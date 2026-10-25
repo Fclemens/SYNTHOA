@@ -37,54 +37,51 @@ class _GlobalLimiter:
       • max_concurrent_tasks  — max parallel in-flight API calls
       • tpm_limit             — tokens per minute (sliding 60-second window)
 
-    Uses a single asyncio.Lock for the critical section plus a counter
-    (instead of a Semaphore) so that the limit is always read from current
-    settings without needing to recreate the primitive.
+    Waiters block on a Condition and are woken on every release; a short
+    timeout also re-checks as old TPM entries age out of the window.
     """
 
     def __init__(self) -> None:
-        self._lock: asyncio.Lock | None = None
+        self._cond: asyncio.Condition | None = None
         self._active: int = 0
-        self._tpm_log: deque[tuple[float, int, int]] = deque()  # (timestamp, tokens, slot_id)
+        self._tpm_log: deque[list] = deque()  # [timestamp, tokens]
 
     @property
-    def _l(self) -> asyncio.Lock:
+    def _c(self) -> asyncio.Condition:
         # Lazily created so the event loop is already running
-        if self._lock is None:
-            self._lock = asyncio.Lock()
-        return self._lock
+        if self._cond is None:
+            self._cond = asyncio.Condition()
+        return self._cond
 
-    async def acquire(self, estimated_tokens: int) -> int:
-        """
-        Block until both the concurrency slot and TPM budget are available.
-        Returns a slot_id that must be passed to release() with the actual
-        token count so the TPM window stays accurate.
-        """
-        while True:
-            async with self._l:
-                now = time.monotonic()
-                # Evict token-log entries older than 60 s
-                while self._tpm_log and self._tpm_log[0][0] < now - 60.0:
-                    self._tpm_log.popleft()
-                used_tpm = sum(t for _, t, _ in self._tpm_log)
-                max_conc = settings.max_concurrent_tasks
-                tpm_cap  = settings.tpm_limit
-                if self._active < max_conc and used_tpm + estimated_tokens <= tpm_cap:
-                    self._active += 1
-                    slot_id = id(object())          # unique key for this slot
-                    self._tpm_log.append((now, estimated_tokens, slot_id))
-                    return slot_id
-            await asyncio.sleep(0.25)
+    def _has_capacity(self, estimated_tokens: int) -> bool:
+        now = time.monotonic()
+        while self._tpm_log and self._tpm_log[0][0] < now - 60.0:
+            self._tpm_log.popleft()
+        used_tpm = sum(t for _, t in self._tpm_log)
+        return (
+            self._active < settings.max_concurrent_tasks
+            and used_tpm + estimated_tokens <= settings.tpm_limit
+        )
 
-    async def release(self, slot_id: int, actual_tokens: int) -> None:
-        """Decrement active counter and correct the TPM entry with real token count."""
-        async with self._l:
+    async def acquire(self, estimated_tokens: int) -> list:
+        """Block until a concurrency slot and TPM budget are free; returns the log entry."""
+        async with self._c:
+            while not self._has_capacity(estimated_tokens):
+                try:
+                    await asyncio.wait_for(self._c.wait(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    pass
+            self._active += 1
+            entry = [time.monotonic(), estimated_tokens]
+            self._tpm_log.append(entry)
+            return entry
+
+    async def release(self, entry: list, actual_tokens: int) -> None:
+        """Free the slot and replace the estimate with real usage."""
+        async with self._c:
             self._active = max(0, self._active - 1)
-            # Replace the estimate with the real usage so future TPM checks are accurate
-            for i, entry in enumerate(self._tpm_log):
-                if entry[2] == slot_id:
-                    self._tpm_log[i] = (entry[0], actual_tokens, slot_id)
-                    break
+            entry[1] = actual_tokens
+            self._c.notify_all()
 
 
 _limiter = _GlobalLimiter()
@@ -95,20 +92,34 @@ _limiter = _GlobalLimiter()
 def _is_context_error(e: Exception) -> bool:
     msg = str(e).lower()
     return any(kw in msg for kw in (
-        "context", "context_length", "maximum context", "too long", "context size",
-        "prompt is too long", "input is too long",
+        "context_length", "maximum context", "too long", "context size",
+        "prompt is too long", "input is too long", "context window",
     ))
 
 
 def _is_structured_format_error(e: Exception) -> bool:
     msg = str(e).lower()
     return any(kw in msg for kw in (
-        "response_format", "json_object", "json_schema", "structured",
-        "tool_choice", "tools",
+        "response_format", "json_object", "json_schema", "output_config", "structured",
     ))
 
 
-_is_json_mode_error = _is_structured_format_error   # backwards-compat alias
+# Request parameters some models reject (e.g. GPT-5.x rejects temperature unless
+# reasoning is off; older models reject reasoning_effort). When the API names one
+# of these in a 400, we drop it for that model for the rest of the process.
+_OPTIONAL_PARAMS = ("temperature", "reasoning_effort", "effort")
+_unsupported: dict[tuple[str, str], set[str]] = {}
+
+
+def _rejected_param(e: Exception) -> Optional[str]:
+    msg = str(e).lower()
+    if "unsupported" not in msg and "not supported" not in msg and "extra inputs" not in msg \
+            and "unrecognized" not in msg and "unknown" not in msg and "invalid" not in msg:
+        return None
+    for param in _OPTIONAL_PARAMS:
+        if f"'{param}'" in msg or f'"{param}"' in msg or f"{param}:" in msg or f".{param}" in msg:
+            return param
+    return None
 
 
 def _truncate_messages(
@@ -119,9 +130,7 @@ def _truncate_messages(
         return messages
     longest_idx = max(range(len(messages)), key=lambda i: len(str(messages[i].get("content", ""))))
     msg = messages[longest_idx]
-    content = msg.get("content", "")
-    if not isinstance(content, str):
-        content = str(content)
+    content = str(msg.get("content", ""))
     cut = int(len(content) * ratio)
     truncated = list(messages)
     truncated[longest_idx] = {
@@ -144,15 +153,32 @@ def get_price(model: str, tokens_in: int, tokens_out: int) -> float:
     return (tokens_in * pricing["input"] + tokens_out * pricing["output"]) / 1_000_000
 
 
-# ── OpenAI-compatible backend (openai + lmstudio) ────────────────────────────
+# ── Clients (cached; rebuilt when keys / base URL change in Settings) ─────────
+
+_clients: dict[tuple, Any] = {}
+
 
 def _get_openai_client(provider: str):
     from openai import AsyncOpenAI
-    kwargs: dict[str, Any] = {"api_key": settings.openai_api_key}
-    if provider == "lmstudio":
-        kwargs["base_url"] = settings.lmstudio_base_url
-    # "openai" → no base_url override, goes to api.openai.com
-    return AsyncOpenAI(**kwargs)
+    base_url = settings.lmstudio_base_url if provider == "lmstudio" else None
+    key = ("openai", provider, settings.openai_api_key, base_url)
+    if key not in _clients:
+        _clients[key] = AsyncOpenAI(api_key=settings.openai_api_key, base_url=base_url)
+    return _clients[key]
+
+
+def _get_anthropic_client():
+    import anthropic
+    key = ("anthropic", settings.anthropic_api_key)
+    if key not in _clients:
+        _clients[key] = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    return _clients[key]
+
+
+# ── OpenAI-compatible backend (openai + lmstudio) ────────────────────────────
+
+def _is_openai_reasoning_model(model: str) -> bool:
+    return model.startswith(("gpt-5", "o1", "o3", "o4"))
 
 
 async def _call_openai(
@@ -168,6 +194,8 @@ async def _call_openai(
 
     client = _get_openai_client(provider)
     current_messages = list(messages)
+    dropped = _unsupported.setdefault((provider, model), set())
+    reasoning = provider == "openai" and _is_openai_reasoning_model(model)
 
     if json_schema is not None:
         current_format: Optional[str] = "json_schema"
@@ -176,21 +204,24 @@ async def _call_openai(
     else:
         current_format = None
 
-    for attempt in range(3):
-        kwargs: dict[str, Any] = {
-            "model": model,
-            "messages": current_messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
+    for _attempt in range(5):
+        kwargs: dict[str, Any] = {"model": model, "messages": current_messages}
+        if provider == "openai":
+            # Reasoning tokens count against the completion budget; leave headroom
+            # so short outputs (backstories, scores) are not cut to nothing.
+            kwargs["max_completion_tokens"] = max(max_tokens, 8000) if reasoning else max_tokens
+        else:
+            kwargs["max_tokens"] = max_tokens
+        if reasoning and "reasoning_effort" not in dropped:
+            # Survey answers need sampling diversity; GPT-5.x only honours
+            # temperature with reasoning switched off.
+            kwargs["reasoning_effort"] = "none"
+        if "temperature" not in dropped:
+            kwargs["temperature"] = temperature
         if current_format == "json_schema" and json_schema is not None:
             kwargs["response_format"] = {
                 "type": "json_schema",
-                "json_schema": {
-                    "name": "structured_output",
-                    "schema": json_schema,
-                    "strict": True,
-                },
+                "json_schema": {"name": "structured_output", "schema": json_schema, "strict": True},
             }
         elif current_format == "json_object":
             kwargs["response_format"] = {"type": "json_object"}
@@ -202,17 +233,16 @@ async def _call_openai(
             tokens_out = response.usage.completion_tokens if response.usage else 0
             return text, tokens_in, tokens_out
 
-        except Exception as e:
-            is_bad = isinstance(e, BadRequestError)
-            if is_bad and _is_context_error(e) and attempt < 2:
+        except BadRequestError as e:
+            param = _rejected_param(e)
+            if param and param in kwargs and param not in dropped:
+                logger.warning(f"[{provider}] Model '{model}' rejected '{param}' — retrying without it")
+                dropped.add(param)
+            elif _is_context_error(e):
                 current_messages = _truncate_messages(current_messages, ratio=0.6)
-            elif is_bad and _is_structured_format_error(e) and current_format is not None:
-                if current_format == "json_schema":
-                    logger.warning(f"[{provider}] Model '{model}' rejected json_schema — falling back to json_object")
-                    current_format = "json_object"
-                else:
-                    logger.warning(f"[{provider}] Model '{model}' rejected json_object — falling back to prompt-only")
-                    current_format = None
+            elif _is_structured_format_error(e) and current_format is not None:
+                current_format = "json_object" if current_format == "json_schema" else None
+                logger.warning(f"[{provider}] Model '{model}' rejected structured output — falling back to {current_format or 'prompt-only'}")
             else:
                 raise
 
@@ -221,78 +251,60 @@ async def _call_openai(
 
 # ── Anthropic backend ─────────────────────────────────────────────────────────
 
-def _get_anthropic_client():
-    import anthropic
-    return anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-
-
 async def _call_anthropic(
     messages: list[dict[str, Any]],
     model: str,
-    temperature: float,
     max_tokens: int,
-    json_mode: bool,
     json_schema: Optional[dict],
 ) -> tuple[str, int, int]:
+    """
+    Current Claude models fix their own sampling (no temperature) and think
+    adaptively, so `max_tokens` gets generous headroom; structured output uses
+    output_config.format rather than forced tool use (which newer models reject).
+    """
     import anthropic
 
     client = _get_anthropic_client()
     current_messages = list(messages)
+    dropped = _unsupported.setdefault(("anthropic", model), set())
 
     def _split(msgs: list[dict[str, Any]]):
         sys_parts = [m["content"] for m in msgs if m["role"] == "system"]
         convo = [m for m in msgs if m["role"] != "system"]
-        sys_text: Any = "\n\n".join(sys_parts) if sys_parts else anthropic.NOT_GIVEN
-        return sys_text, convo
+        return ("\n\n".join(sys_parts) if sys_parts else anthropic.NOT_GIVEN), convo
 
-    system_text, convo = _split(current_messages)
-    use_tool = json_schema is not None
+    use_schema = json_schema is not None
 
-    for attempt in range(3):
+    for _attempt in range(5):
+        system_text, convo = _split(current_messages)
+        output_config: dict[str, Any] = {}
+        if "effort" not in dropped:
+            output_config["effort"] = "low"   # simple, high-volume tasks
+        if use_schema:
+            output_config["format"] = {"type": "json_schema", "schema": json_schema}
         try:
-            if use_tool:
-                response = await client.messages.create(
-                    model=model,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    system=system_text,
-                    messages=convo,
-                    tools=[{
-                        "name": "structured_output",
-                        "description": "Return the response as structured JSON matching the schema.",
-                        "input_schema": json_schema,
-                    }],
-                    tool_choice={"type": "tool", "name": "structured_output"},
-                )
-                text = ""
-                for block in response.content:
-                    if block.type == "tool_use":
-                        text = json.dumps(block.input)
-                        break
-                if not text:
-                    text = "".join(b.text for b in response.content if hasattr(b, "text"))
-            else:
-                response = await client.messages.create(
-                    model=model,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    system=system_text,
-                    messages=convo,
-                )
-                text = "".join(b.text for b in response.content if hasattr(b, "text"))
+            response = await client.messages.create(
+                model=model,
+                max_tokens=max(max_tokens, 16000),
+                system=system_text,
+                messages=convo,
+                **({"output_config": output_config} if output_config else {}),
+            )
+            if response.stop_reason == "refusal":
+                raise RuntimeError(f"Model '{model}' declined the request")
+            text = "".join(b.text for b in response.content if b.type == "text")
+            return text, response.usage.input_tokens, response.usage.output_tokens
 
-            tokens_in = response.usage.input_tokens
-            tokens_out = response.usage.output_tokens
-            return text, tokens_in, tokens_out
-
-        except Exception as e:
-            is_api_err = hasattr(e, "status_code")
-            if is_api_err and _is_context_error(e) and attempt < 2:
+        except anthropic.BadRequestError as e:
+            param = _rejected_param(e)
+            if param == "effort" and "effort" not in dropped:
+                logger.warning(f"[anthropic] Model '{model}' rejected effort — retrying without it")
+                dropped.add("effort")
+            elif _is_context_error(e):
                 current_messages = _truncate_messages(current_messages, ratio=0.6)
-                system_text, convo = _split(current_messages)
-            elif is_api_err and _is_structured_format_error(e) and use_tool:
-                logger.warning(f"[anthropic] Model '{model}' rejected tool-use — falling back to prompt-only")
-                use_tool = False
+            elif use_schema and _is_structured_format_error(e):
+                logger.warning(f"[anthropic] Model '{model}' rejected structured output — falling back to prompt-only")
+                use_schema = False
             else:
                 raise
 
@@ -336,21 +348,19 @@ async def call_llm_messages(
     provider: "openai" | "lmstudio" | "anthropic"
     Returns (response_text, tokens_in, tokens_out).
 
-    Every call passes through _limiter which enforces settings.max_concurrent_tasks
-    (parallel calls) and settings.tpm_limit (tokens per minute).
+    `temperature` is honoured where the model supports it (OpenAI-compatible
+    providers); current Claude models use fixed sampling and ignore it.
     """
     # Estimate input tokens to gate admission; actual usage corrects the log on release.
     est_tokens = max(100, sum(len(str(m.get("content", ""))) // 4 for m in messages) + 500)
-    slot_id = await _limiter.acquire(est_tokens)
+    entry = await _limiter.acquire(est_tokens)
     actual_in = actual_out = 0
     try:
         if provider == "anthropic":
             text, actual_in, actual_out = await _call_anthropic(
-                messages, model=model, temperature=temperature,
-                max_tokens=max_tokens, json_mode=json_mode, json_schema=json_schema,
+                messages, model=model, max_tokens=max_tokens, json_schema=json_schema,
             )
         else:
-            # "openai" or "lmstudio" — both go through OpenAI client
             text, actual_in, actual_out = await _call_openai(
                 messages, model=model, temperature=temperature,
                 max_tokens=max_tokens, json_mode=json_mode, json_schema=json_schema,
@@ -358,7 +368,7 @@ async def call_llm_messages(
             )
         return text, actual_in, actual_out
     finally:
-        await _limiter.release(slot_id, actual_in + actual_out)
+        await _limiter.release(entry, actual_in + actual_out)
 
 
 # ── JSON parsing ──────────────────────────────────────────────────────────────
@@ -378,5 +388,4 @@ def parse_json_response(text: str) -> dict[str, Any]:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    cleaned = _strip_json_comments(text)
-    return json.loads(cleaned)
+    return json.loads(_strip_json_comments(text))

@@ -2,7 +2,7 @@ from __future__ import annotations
 import warnings
 from datetime import datetime
 from typing import Any, Literal, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Suppress the false-positive "schema_json shadows BaseModel.schema_json" warning
 # (schema_json() was removed in Pydantic v2; the field name is fine)
@@ -33,26 +33,6 @@ class ExperimentDistVariableOut(BaseModel):
     var_type: str
     distribution: dict[str, Any]
     sort_order: int
-
-
-# ── ExperimentVariable ───────────────────────────────────────────────────────
-
-class AttributeWeight(BaseModel):
-    value: str
-    weight: float = 1.0
-
-
-class ExperimentVariableCreate(BaseModel):
-    placeholder: str
-    attributes: list[AttributeWeight]
-
-
-class ExperimentVariableOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    id: str
-    experiment_id: str
-    placeholder: str
-    attributes: list[dict[str, Any]]
 
 
 # ── Question ──────────────────────────────────────────────────────────────────
@@ -107,8 +87,15 @@ class QuestionOut(BaseModel):
 
 class OutputSchemaField(BaseModel):
     key: str
-    type: Literal["boolean", "integer", "float", "string", "scale"]
+    type: Literal["boolean", "integer", "float", "string", "scale", "enum"]
     description: Optional[str] = None
+    values: Optional[list[str]] = None   # allowed values when type == "enum"
+
+    @model_validator(mode="after")
+    def _enum_has_values(self) -> "OutputSchemaField":
+        if self.type == "enum" and not self.values:
+            raise ValueError(f"Field '{self.key}': enum fields need at least one value")
+        return self
 
 
 class OutputSchemaCreate(BaseModel):
@@ -152,7 +139,6 @@ class ExperimentOut(BaseModel):
     execution_mode: str
     drift_detection_enabled: bool
     created_at: datetime
-    variables: list[ExperimentVariableOut] = []
     dist_variables: list[ExperimentDistVariableOut] = []
     questions: list[QuestionOut] = []
     output_schemas: list[OutputSchemaOut] = []
@@ -206,6 +192,7 @@ class PreflightReport(BaseModel):
 # ── Experiment Protocol Import / Export ───────────────────────────────────────
 
 class ExperimentProtocolVariable(BaseModel):
+    """Legacy {{placeholder}} variable — converted to a categorical variable on import."""
     placeholder: str
     attributes: list[dict[str, Any]]
 
@@ -223,6 +210,8 @@ class ExperimentProtocolQuestion(BaseModel):
     question_text: str
     scale_min: Optional[int] = None
     scale_max: Optional[int] = None
+    scale_anchor_low: Optional[str] = None
+    scale_anchor_high: Optional[str] = None
     choices: Optional[list[str]] = None
     ask_why: bool = False
     prompting_mode: Optional[str] = None
@@ -232,6 +221,7 @@ class ExperimentProtocolMeta(BaseModel):
     name: str
     global_context: str = ""
     execution_mode: str = "pooled"
+    drift_detection_enabled: bool = True
 
 
 class ExperimentProtocolBundle(BaseModel):
@@ -253,7 +243,6 @@ class ExperimentImportRequest(BaseModel):
 class ExperimentImportResult(BaseModel):
     experiment_id: str
     name: str
-    variables_imported: int
     dist_variables_imported: int
     questions_imported: int
     output_schema_imported: bool
@@ -262,13 +251,16 @@ class ExperimentImportResult(BaseModel):
 # ── Preview Interview ─────────────────────────────────────────────────────────
 
 class PreviewInterviewRequest(BaseModel):
-    persona_id: str
-    model: str = "gpt-4o"
+    persona_id: Optional[str] = None   # None = a random persona from the audience
+    model: Optional[str] = None        # None = settings.model_pass1
     dual_extraction: bool = False
 
 
 class PreviewInterviewResult(BaseModel):
     persona_id: str
+    persona_traits: dict[str, Any]
+    backstory: str
+    resolved_variables: dict[str, str]
     assembled_prompt: str  # exact prompt/messages sent — for debugging
     transcript: str
     extracted_json: Optional[dict[str, Any]]

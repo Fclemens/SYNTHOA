@@ -85,8 +85,8 @@ async def summarize_field(
     if field.get("n", 0) == 0:
         raise HTTPException(status_code=400, detail="No data available for this field")
 
-    model = settings.effective_insights_model
-    provider = settings.effective_insights_provider
+    model = settings.step_model("insights")
+    provider = settings.step_provider("insights")
     text, tin, tout = await summarize_field_llm(
         field_key=body.field_key,
         field_data=field,
@@ -130,8 +130,8 @@ async def text_analytics(
     if field.get("type", "").lower() not in ("open_ended", "text", "string"):
         raise HTTPException(status_code=400, detail="Text analytics only applies to open_ended / text / string fields")
 
-    model = settings.effective_insights_model
-    provider = settings.effective_insights_provider
+    model = settings.step_model("insights")
+    provider = settings.step_provider("insights")
     parsed, tin, tout = await analyze_text_field(
         field_key=body.field_key,
         field_data=field,
@@ -199,8 +199,8 @@ async def deep_dive(
                 "extracted_json": t.extracted_json or {},
             })
 
-    ins_model = settings.effective_insights_model
-    ins_provider = settings.effective_insights_provider
+    ins_model = settings.step_model("insights")
+    ins_provider = settings.step_provider("insights")
     text, tin, tout = await generate_deep_dive(
         run=run,
         summary=summary,

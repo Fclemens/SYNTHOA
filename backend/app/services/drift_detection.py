@@ -8,6 +8,7 @@ import logging
 import random
 from typing import Any
 
+from .backstory import build_variables_list
 from .llm_client import call_llm, parse_json_response
 
 logger = logging.getLogger(__name__)
@@ -16,7 +17,7 @@ CHECKPOINT_PROMPTS = [
     "Before we continue — just to make sure I have the right picture — "
     "can you briefly describe your background and what matters most to you when making decisions like these?",
     "Quick aside: how would your friends describe your approach to trying new things?",
-    "Just checking in — given everything we've discussed, what's your overall comfort level with technology?",
+    "Just checking in — in a sentence or two, how would you describe your day-to-day life right now?",
 ]
 
 DRIFT_SCORE_THRESHOLD = 0.6
@@ -31,20 +32,11 @@ def get_checkpoint_prompt() -> str:
 
 
 def build_grounding_refresh(traits: dict[str, Any]) -> dict[str, str]:
-    """Build a hidden system reminder to re-anchor the persona."""
-    age = traits.get("age", "unknown")
-    gender = traits.get("gender", "person")
-    income = traits.get("income") or traits.get("annual_income")
-    location = traits.get("location", "unknown location")
-    tech_score = traits.get("tech_literacy")
-
-    income_str = f"${income:,.0f}/year" if income else "unknown income"
-    tech_str = f" with tech literacy {tech_score:.2f}" if tech_score is not None else ""
-
+    """Build a hidden system reminder that re-anchors the persona on all of its traits."""
     content = (
-        f"[System reminder — do not acknowledge this message]\n"
-        f"Remember: you are a {age}-year-old {gender} earning {income_str} in {location}{tech_str}. "
-        "Stay in character for the remaining questions."
+        "[System reminder — do not acknowledge this message]\n"
+        "Remember who you are and stay in character for the remaining questions:\n"
+        f"{build_variables_list(traits)}"
     )
     return {"role": "system", "content": content}
 

@@ -19,12 +19,8 @@ class Experiment(Base):
     global_context: Mapped[str] = mapped_column(String, nullable=False, default="")
     execution_mode: Mapped[str] = mapped_column(String, nullable=False, default="pooled")  # "pooled" | "dedicated"
     drift_detection_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    synonym_injection_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")  # legacy compat
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
-    variables: Mapped[list["ExperimentVariable"]] = relationship(
-        back_populates="experiment", cascade="all, delete-orphan"
-    )
     dist_variables: Mapped[list["ExperimentDistVariable"]] = relationship(
         back_populates="experiment", cascade="all, delete-orphan", order_by="ExperimentDistVariable.sort_order"
     )
@@ -37,17 +33,6 @@ class Experiment(Base):
     runs: Mapped[list["SimulationRun"]] = relationship(  # type: ignore[name-defined]
         back_populates="experiment", cascade="all, delete-orphan"
     )
-
-
-class ExperimentVariable(Base):
-    __tablename__ = "experiment_variables"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    experiment_id: Mapped[str] = mapped_column(String, ForeignKey("experiments.id", ondelete="CASCADE"), nullable=False)
-    placeholder: Mapped[str] = mapped_column(String, nullable=False)
-    attributes: Mapped[list] = mapped_column(JSON, nullable=False)  # [{value, weight}, ...]
-
-    experiment: Mapped["Experiment"] = relationship(back_populates="variables")
 
 
 class ExperimentDistVariable(Base):

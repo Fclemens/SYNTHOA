@@ -13,7 +13,7 @@ from scipy.stats import expon, gamma, lognorm, norm, poisson as poisson_dist, tr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models.audience import AudienceVariable, ConditionalRule
+from ..models.audience import AudienceVariable, ConditionalRule, VariableCorrelation
 
 logger = logging.getLogger(__name__)
 
@@ -207,25 +207,22 @@ def _toposort_cat_vars(cat_vars: list, rules: list) -> list:
     return sorted(cat_vars, key=lambda v: id_order.get(v.id, 999))
 
 
+_OPS = {
+    "<": lambda a, b: a < b, "<=": lambda a, b: a <= b,
+    ">": lambda a, b: a > b, ">=": lambda a, b: a >= b,
+    "==": lambda a, b: a == b, "!=": lambda a, b: a != b,
+}
+
+
 def evaluate_condition(expr: dict[str, Any], traits: dict[str, Any]) -> bool:
     var_val = traits.get(expr["var"])
-    if var_val is None:
+    op = _OPS.get(expr["op"])
+    if var_val is None or op is None:
         return False
-    op = expr["op"]
-    threshold = expr["value"]
-    if op == "<":
-        return var_val < threshold
-    elif op == "<=":
-        return var_val <= threshold
-    elif op == ">":
-        return var_val > threshold
-    elif op == ">=":
-        return var_val >= threshold
-    elif op == "==":
-        return var_val == threshold
-    elif op == "!=":
-        return var_val != threshold
-    return False
+    try:
+        return bool(op(var_val, expr["value"]))
+    except TypeError:   # e.g. a bucket label compared with a number
+        return False
 
 
 # ── Main sampling function ─────────────────────────────────────────────────────
@@ -257,7 +254,6 @@ async def sample_correlated_population(
     copula_vars = cont_vars + ordinal_vars + binary_cat_vars
 
     # Load correlations
-    from ..models.audience import VariableCorrelation
     corr_result = await db.execute(
         select(VariableCorrelation).where(VariableCorrelation.audience_id == audience_id)
     )
@@ -276,77 +272,56 @@ async def sample_correlated_population(
     k = len(copula_vars)
     var_index = {v.id: i for i, v in enumerate(copula_vars)}
 
+    def apply_categoricals(traits: dict[str, Any]) -> dict[str, Any]:
+        """Multi-option categoricals, each possibly overridden by conditional rules."""
+        for cat_var in cat_vars:
+            dist = cat_var.distribution
+            for rule in rules:
+                if rule.target_var_id == cat_var.id and evaluate_condition(rule.condition_expr, traits):
+                    dist = rule.override_dist
+            traits[cat_var.name] = sample_categorical(dist)
+        return traits
+
+    if k == 0:
+        return [apply_categoricals({}) for _ in range(n)]
+
+    # Build correlation matrix
+    R = np.eye(k)
+    for corr in correlations:
+        i = var_index.get(corr.var_a_id)
+        j = var_index.get(corr.var_b_id)
+        if i is not None and j is not None:
+            R[i, j] = corr.correlation
+            R[j, i] = corr.correlation
+
+    if not is_positive_semidefinite(R):
+        R = nearest_psd(R)
+        logger.warning(f"Correlation matrix for audience {audience_id} was not PSD; auto-corrected.")
+
+    L = np.linalg.cholesky(R)
+    U = np.clip(norm.cdf(np.random.standard_normal((n, k)) @ L.T), 1e-6, 1 - 1e-6)  # avoid ppf at 0/1
+
     personas: list[dict[str, Any]] = []
-
-    if k > 0:
-        # Build correlation matrix
-        R = np.eye(k)
-        for corr in correlations:
-            i = var_index.get(corr.var_a_id)
-            j = var_index.get(corr.var_b_id)
-            if i is not None and j is not None:
-                R[i, j] = corr.correlation
-                R[j, i] = corr.correlation
-
-        if not is_positive_semidefinite(R):
-            R = nearest_psd(R)
-            logger.warning(f"Correlation matrix for audience {audience_id} was not PSD; auto-corrected.")
-
-        L = np.linalg.cholesky(R)
-        Z = np.random.standard_normal((n, k))
-        correlated_Z = Z @ L.T
-
-        for row in correlated_Z:
-            traits: dict[str, Any] = {}
-            for idx, var in enumerate(copula_vars):
-                u = float(norm.cdf(row[idx]))
-                u = max(1e-6, min(1 - 1e-6, u))  # avoid ppf at 0/1
-                value = inverse_cdf(var.distribution, u)
-
-                if var.var_type == "ordinal":
-                    # Decode float index → label (supports str[] and {label,weight}[])
-                    opts = var.distribution.get("options", [])
-                    i = max(0, min(int(value), len(opts) - 1))
-                    if opts:
-                        entry = opts[i]
-                        traits[var.name] = entry["label"] if isinstance(entry, dict) else entry
-                    else:
-                        traits[var.name] = ""
-                elif var.var_type == "categorical":
-                    # Binary categorical: decode 0/1 → label
-                    opts = var.distribution.get("options", [])
-                    choice = int(round(value))
-                    choice = max(0, min(choice, len(opts) - 1))
-                    traits[var.name] = opts[choice]["label"] if opts else ""
+    for row in U:
+        traits: dict[str, Any] = {}
+        for idx, var in enumerate(copula_vars):
+            value = inverse_cdf(var.distribution, float(row[idx]))
+            opts = var.distribution.get("options", [])
+            if var.var_type == "ordinal":
+                # Decode float index → label (supports str[] and {label,weight}[])
+                entry = opts[max(0, min(int(value), len(opts) - 1))] if opts else ""
+                traits[var.name] = entry["label"] if isinstance(entry, dict) else entry
+            elif var.var_type == "categorical":
+                # Binary categorical: decode 0/1 → label
+                traits[var.name] = opts[max(0, min(int(round(value)), len(opts) - 1))]["label"] if opts else ""
+            else:
+                value = clip_to_bounds(value, var.distribution)
+                if var.distribution.get("normalize_labels") or var.distribution.get("bucket_labels"):
+                    traits[var.name] = bucket_label(value, var.distribution)
+                elif var.distribution.get("round_to_int"):
+                    traits[var.name] = int(round(value))
                 else:
-                    # Continuous
-                    value = clip_to_bounds(value, var.distribution)
-                    if var.distribution.get("normalize_labels") or var.distribution.get("bucket_labels"):
-                        traits[var.name] = bucket_label(value, var.distribution)
-                    elif var.distribution.get("round_to_int"):
-                        traits[var.name] = int(round(value))
-                    else:
-                        traits[var.name] = round(value, 2)
-
-            # Categorical variables with conditional rules
-            for cat_var in cat_vars:
-                dist = dict(cat_var.distribution)
-                for rule in rules:
-                    if rule.target_var_id == cat_var.id and evaluate_condition(rule.condition_expr, traits):
-                        dist = rule.override_dist
-                traits[cat_var.name] = sample_categorical(dist)
-
-            personas.append(traits)
-    else:
-        # Only categorical variables
-        for _ in range(n):
-            traits = {}
-            for cat_var in cat_vars:
-                dist = dict(cat_var.distribution)
-                for rule in rules:
-                    if rule.target_var_id == cat_var.id and evaluate_condition(rule.condition_expr, traits):
-                        dist = rule.override_dist
-                traits[cat_var.name] = sample_categorical(dist)
-            personas.append(traits)
+                    traits[var.name] = round(value, 2)
+        personas.append(apply_categoricals(traits))
 
     return personas

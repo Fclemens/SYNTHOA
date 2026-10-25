@@ -33,10 +33,6 @@ class Audience(Base):
         back_populates="audience", cascade="all, delete-orphan"
     )
 
-    @property
-    def persona_count(self) -> int:
-        return len(self.personas)
-
 
 class AudienceVariable(Base):
     __tablename__ = "audience_variables"
@@ -44,7 +40,7 @@ class AudienceVariable(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     audience_id: Mapped[str] = mapped_column(String, ForeignKey("audiences.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
-    var_type: Mapped[str] = mapped_column(String, nullable=False)  # "continuous" | "categorical"
+    var_type: Mapped[str] = mapped_column(String, nullable=False)  # "continuous" | "categorical" | "ordinal"
     distribution: Mapped[dict] = mapped_column(JSON, nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
 
@@ -55,8 +51,8 @@ class VariableCorrelation(Base):
     __tablename__ = "variable_correlations"
 
     audience_id: Mapped[str] = mapped_column(String, ForeignKey("audiences.id", ondelete="CASCADE"), primary_key=True)
-    var_a_id: Mapped[str] = mapped_column(String, ForeignKey("audience_variables.id"), primary_key=True)
-    var_b_id: Mapped[str] = mapped_column(String, ForeignKey("audience_variables.id"), primary_key=True)
+    var_a_id: Mapped[str] = mapped_column(String, ForeignKey("audience_variables.id", ondelete="CASCADE"), primary_key=True)
+    var_b_id: Mapped[str] = mapped_column(String, ForeignKey("audience_variables.id", ondelete="CASCADE"), primary_key=True)
     correlation: Mapped[float] = mapped_column(Float, nullable=False)
 
     audience: Mapped["Audience"] = relationship(back_populates="correlations")
@@ -68,7 +64,7 @@ class ConditionalRule(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     audience_id: Mapped[str] = mapped_column(String, ForeignKey("audiences.id", ondelete="CASCADE"), nullable=False)
     condition_expr: Mapped[dict] = mapped_column(JSON, nullable=False)  # {"var": "age", "op": "<", "value": 25}
-    target_var_id: Mapped[str] = mapped_column(String, ForeignKey("audience_variables.id"), nullable=False)
+    target_var_id: Mapped[str] = mapped_column(String, ForeignKey("audience_variables.id", ondelete="CASCADE"), nullable=False)
     override_dist: Mapped[dict] = mapped_column(JSON, nullable=False)
     priority: Mapped[int] = mapped_column(Integer, default=0)
 
@@ -79,11 +75,12 @@ class Persona(Base):
     __tablename__ = "personas"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    audience_id: Mapped[str] = mapped_column(String, ForeignKey("audiences.id", ondelete="CASCADE"), nullable=False)
+    audience_id: Mapped[str] = mapped_column(String, ForeignKey("audiences.id", ondelete="CASCADE"), nullable=False, index=True)
     traits_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     backstory: Mapped[str | None] = mapped_column(String)
-    plausibility: Mapped[float | None] = mapped_column(Float)
-    flagged: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Archived personas were replaced by a fresh sample but are kept because past
+    # runs reference them; they are excluded from the audience's active panel.
+    archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     audience: Mapped["Audience"] = relationship(back_populates="personas")
@@ -99,9 +96,6 @@ class SamplingJob(Base):
     n_requested: Mapped[int] = mapped_column(Integer, nullable=False)
     n_completed: Mapped[int] = mapped_column(Integer, default=0)
     backstory_mode: Mapped[str] = mapped_column(String, default="llm")
-    generate_backstories: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")  # legacy compat
-    validate_plausibility: Mapped[bool] = mapped_column(Boolean, default=True)
-    llm_validation: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
     error: Mapped[str | None] = mapped_column(String)

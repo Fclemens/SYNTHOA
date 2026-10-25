@@ -3,7 +3,7 @@ GET /api/settings  — read current model + execution settings
 PUT /api/settings  — update (persisted to settings_override.json)
 """
 from __future__ import annotations
-from typing import Optional
+from typing import Literal, Optional
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -34,11 +34,6 @@ class AppSettingsOut(BaseModel):
     effective_backstory_provider: str
     effective_backstory_model: str
 
-    provider_validation: str         # "" → inherit from pass2
-    model_validation: str            # "" → inherit from model_pass2
-    effective_validation_provider: str
-    effective_validation_model: str
-
     provider_insights: str           # "" → inherit from pass2
     model_insights: str              # "" → inherit from model_pass2
     effective_insights_provider: str
@@ -47,7 +42,6 @@ class AppSettingsOut(BaseModel):
     # ── Execution ─────────────────────────────────────────────────────────────
     max_concurrent_tasks: int
     tpm_limit: int
-    plausibility_threshold: float
     max_context_tokens: int
 
     # ── Pricing ───────────────────────────────────────────────────────────────
@@ -63,25 +57,21 @@ class AppSettingsUpdate(BaseModel):
     anthropic_api_key: Optional[str] = None
 
     # Per-step provider + model
-    provider_pass1: Optional[str] = None
+    provider_pass1: Optional[Literal["openai", "lmstudio", "anthropic"]] = None
     model_pass1: Optional[str] = None
 
-    provider_pass2: Optional[str] = None
+    provider_pass2: Optional[Literal["openai", "lmstudio", "anthropic"]] = None
     model_pass2: Optional[str] = None
 
-    provider_backstory: Optional[str] = None
+    provider_backstory: Optional[Literal["", "openai", "lmstudio", "anthropic"]] = None
     model_backstory: Optional[str] = None
 
-    provider_validation: Optional[str] = None
-    model_validation: Optional[str] = None
-
-    provider_insights: Optional[str] = None
+    provider_insights: Optional[Literal["", "openai", "lmstudio", "anthropic"]] = None
     model_insights: Optional[str] = None
 
     # Execution
     max_concurrent_tasks: Optional[int] = Field(None, ge=1, le=100)
     tpm_limit: Optional[int] = Field(None, ge=1000)
-    plausibility_threshold: Optional[float] = Field(None, ge=0.0, le=1.0)
     max_context_tokens: Optional[int] = Field(None, ge=1000)
 
     # Pricing
@@ -102,19 +92,14 @@ async def get_settings():
         model_pass2=settings.model_pass2,
         provider_backstory=settings.provider_backstory,
         model_backstory=settings.model_backstory,
-        effective_backstory_provider=settings.effective_backstory_provider,
-        effective_backstory_model=settings.effective_backstory_model,
-        provider_validation=settings.provider_validation,
-        model_validation=settings.model_validation,
-        effective_validation_provider=settings.effective_validation_provider,
-        effective_validation_model=settings.effective_validation_model,
+        effective_backstory_provider=settings.step_provider("backstory"),
+        effective_backstory_model=settings.step_model("backstory"),
         provider_insights=settings.provider_insights,
         model_insights=settings.model_insights,
-        effective_insights_provider=settings.effective_insights_provider,
-        effective_insights_model=settings.effective_insights_model,
+        effective_insights_provider=settings.step_provider("insights"),
+        effective_insights_model=settings.step_model("insights"),
         max_concurrent_tasks=settings.max_concurrent_tasks,
         tpm_limit=settings.tpm_limit,
-        plausibility_threshold=settings.plausibility_threshold,
         max_context_tokens=settings.max_context_tokens,
         model_pricing=settings.model_pricing,
     )

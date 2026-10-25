@@ -1,27 +1,39 @@
 """
 Background service for async persona sampling jobs.
-Each persona is committed immediately so closing the page never loses progress.
+Traits for the whole job are sampled in one vectorised draw; backstories are
+generated concurrently in small batches, each batch committed immediately so
+stopping the job or closing the page never loses progress.
 """
 from __future__ import annotations
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
-from sqlalchemy import select
-
+from ..config import settings
 from ..models.audience import Audience, Persona, SamplingJob
 from ..services.backstory import generate_backstory, generate_backstory_template
 from ..services.sampling import sample_correlated_population
-from ..config import settings
 
 logger = logging.getLogger(__name__)
 
+BATCH_SIZE = 10
+
+
+async def _backstory(mode: str, traits: dict[str, Any], template: str | None) -> str | None:
+    if mode == "llm":
+        return await generate_backstory(
+            traits, settings.step_model("backstory"),
+            provider=settings.step_provider("backstory"), custom_template=template,
+        )
+    if mode == "template":
+        return generate_backstory_template(traits, custom_template=template)
+    return None
+
 
 async def run_sampling_job(job_id: str) -> None:
-    """
-    Background task: sample personas one at a time, committing after each one.
-    Checks job.status after each commit — stops cleanly if set to 'stopped'.
-    """
+    """Sample the job's remaining personas; stops cleanly when the job is set to 'stopped'."""
     from ..database import AsyncSessionLocal
 
     async with AsyncSessionLocal() as db:
@@ -34,67 +46,45 @@ async def run_sampling_job(job_id: str) -> None:
             job.error = "Audience not found"
             await db.commit()
             return
-
         job.status = "running"
         await db.commit()
+        audience_id, mode, template = job.audience_id, job.backstory_mode, audience.backstory_prompt_template
+        remaining = job.n_requested - job.n_completed
+        try:
+            all_traits = await sample_correlated_population(audience_id, remaining, db) if remaining > 0 else []
+        except Exception as e:
+            logger.error(f"Sampling job {job_id} failed: {e}")
+            job.status = "failed"
+            job.error = str(e)
+            await db.commit()
+            return
 
-    remaining = job.n_requested - job.n_completed
+    for start in range(0, len(all_traits), BATCH_SIZE):
+        batch = all_traits[start:start + BATCH_SIZE]
+        error: Exception | None = None
+        try:
+            stories = await asyncio.gather(*(_backstory(mode, t, template) for t in batch))
+        except Exception as e:
+            error = e
 
-    for _ in range(remaining):
-        # Open a fresh session per persona so each commit is independent
         async with AsyncSessionLocal() as db:
-            # Re-fetch job to check for stop signal
             job = await db.get(SamplingJob, job_id)
-            if not job or job.status == "stopped":
+            if not job:
                 return
-
-            audience = await db.get(Audience, job.audience_id)
-            if not audience:
+            if error is not None:
+                logger.error(f"Sampling job {job_id} failed: {error}")
                 job.status = "failed"
-                job.error = "Audience not found"
+                job.error = str(error)
                 await db.commit()
                 return
-
-            try:
-                raw_traits = await sample_correlated_population(job.audience_id, 1, db)
-                if not raw_traits:
-                    continue
-                traits = raw_traits[0]
-
-                backstory = None
-                mode = getattr(job, "backstory_mode", "llm")
-                if mode == "llm":
-                    backstory = await generate_backstory(
-                        traits,
-                        settings.effective_backstory_model,
-                        provider=settings.effective_backstory_provider,
-                        custom_template=audience.backstory_prompt_template,
-                    )
-                elif mode == "template":
-                    backstory = generate_backstory_template(
-                        traits,
-                        custom_template=audience.backstory_prompt_template,
-                    )
-
-                persona = Persona(
-                    id=str(uuid.uuid4()),
-                    audience_id=job.audience_id,
-                    traits_json=traits,
-                    backstory=backstory,
-                )
-                db.add(persona)
-
-                job.n_completed += 1
-                await db.commit()
-
-            except Exception as e:
-                logger.error(f"Sampling job {job_id} error on persona {job.n_completed + 1}: {e}")
-                job.status = "failed"
-                job.error = str(e)
-                await db.commit()
+            # Keep a finished batch even if the job was paused meanwhile — it is already paid for.
+            for traits, story in zip(batch, stories):
+                db.add(Persona(id=str(uuid.uuid4()), audience_id=audience_id, traits_json=traits, backstory=story))
+            job.n_completed += len(batch)
+            await db.commit()
+            if job.status != "running":
                 return
 
-    # All done — mark completed
     async with AsyncSessionLocal() as db:
         job = await db.get(SamplingJob, job_id)
         if job and job.status == "running":

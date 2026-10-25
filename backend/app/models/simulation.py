@@ -18,7 +18,7 @@ class SimulationRun(Base):
     model_pass1: Mapped[str] = mapped_column(String, nullable=False)
     model_pass2: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
-    # pending → running → completed | failed | cancelled
+    # pending → running → completed | completed_with_errors | failed | cancelled
     total_tasks: Mapped[int] = mapped_column(Integer, nullable=False)
     completed_tasks: Mapped[int] = mapped_column(Integer, default=0)
     failed_tasks: Mapped[int] = mapped_column(Integer, default=0)
@@ -38,8 +38,9 @@ class SimulationTask(Base):
     __tablename__ = "simulation_tasks"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    run_id: Mapped[str] = mapped_column(String, ForeignKey("simulation_runs.id", ondelete="CASCADE"), nullable=False)
-    persona_id: Mapped[str] = mapped_column(String, ForeignKey("personas.id"), nullable=False)
+    run_id: Mapped[str] = mapped_column(String, ForeignKey("simulation_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    # No cascade: personas used by a run are archived, never deleted (see audiences router).
+    persona_id: Mapped[str] = mapped_column(String, ForeignKey("personas.id"), nullable=False, index=True)
     injected_vars: Mapped[dict] = mapped_column(JSON, nullable=False)
 
     # Pass 1
@@ -66,29 +67,3 @@ class SimulationTask(Base):
     pass2_error: Mapped[str | None] = mapped_column(String)
 
     run: Mapped["SimulationRun"] = relationship(back_populates="tasks")
-
-
-class CalibrationBenchmark(Base):
-    __tablename__ = "calibration_benchmarks"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    experiment_id: Mapped[str] = mapped_column(String, ForeignKey("experiments.id", ondelete="CASCADE"), nullable=False)
-    question_id: Mapped[str] = mapped_column(String, ForeignKey("questions.id"), nullable=False)
-    real_distribution: Mapped[list] = mapped_column(JSON, nullable=False)
-    synthetic_distribution: Mapped[list] = mapped_column(JSON, nullable=False)
-    js_divergence: Mapped[float] = mapped_column(Float, nullable=False)
-    sample_size_real: Mapped[int] = mapped_column(Integer, nullable=False)
-    sample_size_synthetic: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-
-
-class CalibrationStatus(Base):
-    __tablename__ = "calibration_status"
-
-    experiment_id: Mapped[str] = mapped_column(
-        String, ForeignKey("experiments.id", ondelete="CASCADE"), primary_key=True
-    )
-    level: Mapped[str] = mapped_column(String, nullable=False, default="uncalibrated")
-    # "uncalibrated" | "directional" | "calibrated"
-    last_calibrated: Mapped[datetime | None] = mapped_column(DateTime)
-    notes: Mapped[str | None] = mapped_column(String)

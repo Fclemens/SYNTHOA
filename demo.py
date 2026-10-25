@@ -95,21 +95,19 @@ corr = req("PUT", f"/api/audiences/{aid}/correlations", {
 print(f"  {corr}")
 
 # ── Step 4: Sample Personas ───────────────────────────────────────────────────
-step(4, "Sample 5 Personas (with backstories)")
-personas = req("POST", f"/api/audiences/{aid}/sample", {
-    "n": 5,
-    "validate_plausibility": True,
-    "llm_validation": False,
-    "reuse_existing": False,
-    "generate_backstories": False   # backstories generated at launch to avoid slow step here
-})
+step(4, "Sample 5 Personas (template backstories, no LLM cost)")
+job = req("POST", f"/api/audiences/{aid}/sample", {"n": 5, "backstory_mode": "template"})
+for _ in range(60):
+    job = req("GET", f"/api/audiences/{aid}/sampling-jobs/{job['id']}")
+    if job["status"] != "running":
+        break
+    time.sleep(1)
+personas = req("GET", f"/api/audiences/{aid}/personas")
 print(f"  Generated {len(personas)} personas:")
 for p in personas:
     traits = p["traits_json"]
-    flag = " ⚠ FLAGGED" if p["flagged"] else ""
     print(f"    • age={traits.get('age'):.0f}  income=${traits.get('income'):,.0f}"
-          f"  tech={traits.get('tech_literacy'):.2f}  role={traits.get('role')}"
-          f"  plausibility={p['plausibility']:.2f}{flag}")
+          f"  tech={traits.get('tech_literacy'):.2f}  role={traits.get('role')}")
 
 # ── Step 5: Create Experiment ─────────────────────────────────────────────────
 step(5, "Create Experiment")
@@ -117,7 +115,7 @@ experiment = req("POST", "/api/experiments", {
     "audience_id": aid,
     "name": "Pricing Sensitivity Study",
     "global_context": (
-        "You are participating in a research study about {{Product}} pricing. "
+        "You are participating in a research study about {Product} pricing. "
         "The product is a project management SaaS tool for teams."
     ),
     "execution_mode": "pooled",
@@ -126,15 +124,16 @@ print(f"  Experiment ID: {experiment['id']}")
 eid = experiment["id"]
 
 # ── Step 6: Add Experiment Variable ──────────────────────────────────────────
-step(6, "Add {{Product}} Variable (A/B test)")
-pvar = req("POST", f"/api/experiments/{eid}/variables", {
-    "placeholder": "Product",
-    "attributes": [
-        {"value": "TaskFlow Pro", "weight": 0.5},
-        {"value": "WorkSync", "weight": 0.5}
-    ]
+step(6, "Add {Product} Variable (A/B test)")
+pvar = req("POST", f"/api/experiments/{eid}/dist-variables", {
+    "name": "Product",
+    "var_type": "categorical",
+    "distribution": {"type": "categorical", "options": [
+        {"label": "TaskFlow Pro", "weight": 0.5},
+        {"label": "WorkSync", "weight": 0.5},
+    ]},
 })
-print(f"  Variable: {pvar['placeholder']} → {pvar['attributes']}")
+print(f"  Variable: {pvar['name']} → {pvar['distribution']['options']}")
 
 # ── Step 7: Add Questions ─────────────────────────────────────────────────────
 step(7, "Add Survey Questions")
@@ -142,28 +141,28 @@ questions = [
     {
         "sort_order": 1,
         "question_type": "scale",
-        "question_text": "How likely are you to purchase {{Product}} at $29/month per user?",
+        "question_text": "How likely are you to purchase {Product} at $29/month per user?",
         "scale_min": 1, "scale_max": 10,
         "ask_why": True
     },
     {
         "sort_order": 2,
         "question_type": "multiple_choice",
-        "question_text": "What is your biggest concern about adopting {{Product}}?",
+        "question_text": "What is your biggest concern about adopting {Product}?",
         "choices": ["Price", "Implementation complexity", "Team adoption", "Feature gaps", "Security/compliance"],
         "ask_why": False
     },
     {
         "sort_order": 3,
         "question_type": "scale",
-        "question_text": "How does $49/month per user feel compared to the value {{Product}} provides?",
+        "question_text": "How does $49/month per user feel compared to the value {Product} provides?",
         "scale_min": 1, "scale_max": 10,
         "ask_why": False
     },
     {
         "sort_order": 4,
         "question_type": "open_ended",
-        "question_text": "What would make you choose {{Product}} over your current solution?",
+        "question_text": "What would make you choose {Product} over your current solution?",
         "ask_why": False
     }
 ]
@@ -196,8 +195,6 @@ preflight = req("POST", f"/api/experiments/{eid}/preflight", {
 if not preflight:
     print("  Preflight failed — check server logs"); exit(1)
 print(f"  Sample size: {preflight['sample_size']}")
-print(f"  Plausibility: mean={preflight['plausibility_summary']['mean_score']:.2f}  "
-      f"flagged={preflight['plausibility_summary']['flagged_count']}")
 print(f"  Token estimate: {preflight['token_estimate']['pass1_input_tokens']} in / "
       f"{preflight['token_estimate']['pass1_output_tokens']} out per persona")
 print(f"  Cost (local model = $0.00): ${preflight['cost_estimate']['grand_total']:.4f} total")
@@ -235,7 +232,7 @@ else:
               f"{status['completed_tasks']}/{status['total_tasks']} done  "
               f"{status['failed_tasks']} failed  "
               f"${status['total_cost_usd']:.4f}")
-        if status["status"] in ("completed", "failed", "cancelled"):
+        if status["status"] in ("completed", "completed_with_errors", "failed", "cancelled"):
             break
 
     # ── Step 12: Show Results ─────────────────────────────────────────────────

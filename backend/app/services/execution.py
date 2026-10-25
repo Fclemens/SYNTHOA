@@ -1,573 +1,372 @@
 """
 Module 4: Execution Engine
-RateLimitedExecutor + full pass1/pass2 orchestration + smart retry + re-extract.
+Pass 1 / Pass 2 orchestration, smart retry, resume, re-extract.
+
+Run progress (completed / failed / cost / final status) is always recomputed
+from the task rows by refresh_run_progress, never incremented in place, so
+concurrent tasks cannot lose updates and re-running a pass cannot double-count.
+LLM calls happen outside DB sessions; sessions are opened only to read and
+write task state.
 """
 from __future__ import annotations
 import asyncio
-import json
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import and_, case, func, or_, select, update
 
 from ..config import settings
-from ..models.experiment import Experiment, ExperimentDistVariable, ExperimentVariable, OutputSchema, Question
-from ..models.audience import Persona
+from ..database import AsyncSessionLocal
+from ..models.audience import Audience, Persona
+from ..models.experiment import OutputSchema
 from ..models.simulation import SimulationRun, SimulationTask
-from ..services.backstory import _build_default_backstory, generate_backstory
-from ..services.drift_detection import (
-    DRIFT_SCORE_THRESHOLD,
-    build_grounding_refresh,
-    get_checkpoint_prompt,
-    score_adherence,
-    should_inject_checkpoint,
-)
-from ..services.extraction import extract_with_confidence
-from ..services.llm_client import call_llm_messages, get_price
-from ..services.prompt_assembly import build_dedicated_messages, build_pooled_prompt, estimate_message_tokens
-from ..services.variable_resolution import resolve_dist_variables, resolve_variables
+from .backstory import build_default_backstory, generate_backstory
+from .extraction import extract_with_confidence
+from .interview import InterviewCancelled, load_experiment_config, resolve_interview, run_interview
+from .llm_client import get_price
 
 logger = logging.getLogger(__name__)
 
-class RateLimitedExecutor:
-    """
-    Dispatches simulation tasks concurrently via asyncio.gather.
-    Rate limiting (max_concurrent_tasks + tpm_limit) is now enforced globally
-    inside llm_client.call_llm_messages, so every LLM call — whether it comes
-    from a simulation task, backstory generation, preview interview, or drift
-    scoring — is subject to the same limits without double-counting.
-    """
-
-    async def execute_batch(
-        self,
-        tasks: list[SimulationTask],
-        run_config: dict[str, Any],
-        db_factory: Any,
-    ) -> None:
-        """Launch all tasks concurrently; rate limiting happens inside each LLM call."""
-        async def _run_one(task: SimulationTask) -> None:
-            # Cancellation check before starting any LLM work
-            async with db_factory() as db:
-                run = await db.get(SimulationRun, task.run_id)
-                if not run or run.status == "cancelled":
-                    return
-            async with db_factory() as db:
-                await _execute_task(task.id, run_config, db)
-
-        await asyncio.gather(*[_run_one(t) for t in tasks], return_exceptions=True)
+ACTIVE_STATUSES = ("pending", "running")
+FINISHED_STATUSES = ("completed", "completed_with_errors", "failed", "cancelled")
 
 
-async def _load_experiment_config(experiment_id: str, db: AsyncSession) -> dict[str, Any]:
-    """Load all experiment-related objects for task execution."""
-    exp = await db.get(Experiment, experiment_id)
-
-    vars_result = await db.execute(
-        select(ExperimentVariable).where(ExperimentVariable.experiment_id == experiment_id)
-    )
-    exp_vars = vars_result.scalars().all()
-
-    dist_vars_result = await db.execute(
-        select(ExperimentDistVariable).where(ExperimentDistVariable.experiment_id == experiment_id)
-    )
-    dist_vars = dist_vars_result.scalars().all()
-
-    q_result = await db.execute(
-        select(Question).where(Question.experiment_id == experiment_id).order_by(Question.sort_order)
-    )
-    questions = q_result.scalars().all()
-
-    schema_result = await db.execute(
-        select(OutputSchema)
-        .where(OutputSchema.experiment_id == experiment_id)
-        .order_by(OutputSchema.version.desc())
-    )
-    schema = schema_result.scalars().first()
-
+def run_settings(run: SimulationRun) -> dict[str, Any]:
+    """Execution parameters locked at launch (older runs fall back to current settings)."""
+    locked = run.locked_config or {}
     return {
-        "experiment": exp,
-        "exp_vars": exp_vars,
-        "dist_vars": dist_vars,
-        "questions": questions,
-        "output_schema": schema.schema_json if schema else [],
+        "model_pass1": run.model_pass1,
+        "model_pass2": run.model_pass2,
+        "provider_pass1": locked.get("provider_pass1", settings.provider_pass1),
+        "provider_pass2": locked.get("provider_pass2", settings.provider_pass2),
+        "dual_extraction": locked.get("dual_extraction", True),
+        "execution_mode": locked.get("execution_mode", "pooled"),
+        "output_schema": locked.get("output_schema", []),
+        "drift_detection_enabled": locked.get("drift_detection_enabled", True),
     }
 
 
-async def _run_pooled_interview(
-    backstory: str,
-    traits: dict[str, Any],
-    config: dict[str, Any],
-    model: str,
-    provider: str = "openai",
-    injected_vars: dict[str, str] | None = None,
-) -> tuple[str, int, int, str]:
-    """
-    Run a pooled (single-prompt) interview.
-    Returns (transcript, tokens_in, tokens_out, assembled_prompt).
-    injected_vars pre-seeds both resolution caches so the LLM sees exactly the
-    values that were stored on the task at launch time.
-    """
-    exp = config["experiment"]
-    exp_vars = config["exp_vars"]
-    dist_vars = config.get("dist_vars", [])
-    questions = config["questions"]
+# ── Progress ──────────────────────────────────────────────────────────────────
 
-    # Pre-seed from stored injected_vars — both caches use the same dict because
-    # exp-var placeholder keys and dist-var name keys never overlap.
-    resolved_cache: dict[str, str] = dict(injected_vars) if injected_vars else {}
-    dist_cache: dict[str, str] = dict(injected_vars) if injected_vars else {}
-    resolved_context = resolve_variables(exp.global_context, exp_vars, resolved_cache)
+async def refresh_run_progress(run_id: str) -> None:
+    """Recompute counters and cost from tasks; finalise the run when nothing is left."""
+    t = SimulationTask
+    is_completed = and_(t.pass1_status == "completed", t.pass2_status == "completed")
+    is_failed = or_(t.pass1_status == "failed", t.pass2_status == "failed")
+    is_cancelled = or_(t.pass1_status == "cancelled", t.pass2_status == "cancelled")
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(
+            select(
+                func.count().label("total"),
+                func.sum(case((is_completed, 1), else_=0)).label("completed"),
+                func.sum(case((is_failed, 1), else_=0)).label("failed"),
+                func.sum(case((and_(~is_failed, is_cancelled), 1), else_=0)).label("cancelled"),
+                func.coalesce(func.sum(t.pass1_cost_usd), 0.0).label("cost1"),
+                func.coalesce(func.sum(t.pass2_cost_usd), 0.0).label("cost2"),
+            ).where(t.run_id == run_id)
+        )).one()
+        completed, failed = int(row.completed or 0), int(row.failed or 0)
+        remaining = row.total - completed - failed - int(row.cancelled or 0)
 
-    q_dicts = []
-    for q in questions:
-        q_text = resolve_variables(q.question_text, exp_vars, resolved_cache)
-        q_text = resolve_dist_variables(q_text, dist_vars, dist_cache)
-        q_dicts.append({
-            "sort_order": q.sort_order,
-            "text": q_text,
-            "type": q.question_type,
-            "ask_why": q.ask_why,
-            "scale_min": q.scale_min,
-            "scale_max": q.scale_max,
-            "choices": q.choices,
-        })
+        values: dict[str, Any] = {
+            "completed_tasks": completed,
+            "failed_tasks": failed,
+            "total_cost_usd": float(row.cost1) + float(row.cost2),
+        }
+        await db.execute(update(SimulationRun).where(SimulationRun.id == run_id).values(**values))
 
-    messages, assembled = build_pooled_prompt(backstory, resolved_context, q_dicts, model)
-    response, tin, tout = await call_llm_messages(messages, model=model, provider=provider, temperature=0.7)
-    return response, tin, tout, assembled
-
-
-class _RunCancelled(Exception):
-    pass
-
-
-async def _run_dedicated_interview(
-    backstory: str,
-    traits: dict[str, Any],
-    config: dict[str, Any],
-    model: str,
-    model_pass2: str,
-    provider: str = "openai",
-    provider_pass2: str = "openai",
-    run_id: str | None = None,
-    db: AsyncSession | None = None,
-    injected_vars: dict[str, str] | None = None,
-    drift_detection_enabled: bool = True,
-) -> tuple[str, int, int, list[float], bool, str]:
-    """
-    Run a multi-turn dedicated interview with drift detection.
-    Returns (transcript, tokens_in, tokens_out, drift_scores, drift_flagged, assembled_prompt).
-    injected_vars pre-seeds resolution caches for consistency with stored task values.
-    """
-    exp = config["experiment"]
-    exp_vars = config["exp_vars"]
-    dist_vars = config.get("dist_vars", [])
-    questions = config["questions"]
-
-    resolved_cache: dict[str, str] = dict(injected_vars) if injected_vars else {}
-    dist_cache: dict[str, str] = dict(injected_vars) if injected_vars else {}
-    resolved_context = resolve_variables(exp.global_context, exp_vars, resolved_cache)
-
-    q_dicts = []
-    for q in questions:
-        q_text = resolve_variables(q.question_text, exp_vars, resolved_cache)
-        q_text = resolve_dist_variables(q_text, dist_vars, dist_cache)
-        q_dicts.append({
-            "sort_order": q.sort_order,
-            "text": q_text,
-            "type": q.question_type,
-            "ask_why": q.ask_why,
-        })
-
-    total_in = total_out = 0
-    drift_scores: list[float] = []
-    drift_flagged = False
-
-    backstory_part = f"{backstory}\n\n" if backstory else ""
-    system_content = (
-        f"{backstory_part}{resolved_context}\n\n"
-        "You are in a research interview. Answer each question naturally and conversationally. "
-        "Wait for each question before responding."
-    )
-    conversation: list[dict[str, str]] = [{"role": "system", "content": system_content}]
-    assembled_parts = [f"[SYSTEM]\n{system_content}"]
-
-    for idx, q in enumerate(q_dicts):
-        # Cancel check between turns
-        if run_id and db:
-            run_check = await db.get(SimulationRun, run_id)
-            if run_check and run_check.status == "cancelled":
-                raise _RunCancelled()
-
-        # Drift checkpoint injection (only when drift detection is enabled)
-        if drift_detection_enabled and should_inject_checkpoint(idx):
-            checkpoint_q = get_checkpoint_prompt()
-            conversation.append({"role": "user", "content": checkpoint_q})
-            cp_response, cp_in, cp_out = await call_llm_messages(
-                conversation, model=model, provider=provider, temperature=0.7
+        if remaining <= 0:
+            final = "completed" if failed == 0 else ("failed" if completed == 0 else "completed_with_errors")
+            await db.execute(
+                update(SimulationRun)
+                .where(SimulationRun.id == run_id, SimulationRun.status == "running")
+                .values(status=final, completed_at=datetime.now(timezone.utc))
             )
-            total_in += cp_in
-            total_out += cp_out
-            conversation.append({"role": "assistant", "content": cp_response})
-
-            # Score adherence (uses pass2 model/provider)
-            score, _ = await score_adherence(cp_response, traits, backstory, model_pass2, provider_pass2)
-            drift_scores.append(score)
-
-            if score < DRIFT_SCORE_THRESHOLD:
-                drift_flagged = True
-                refresh_msg = build_grounding_refresh(traits)
-                conversation.append(refresh_msg)
-                assembled_parts.append(f"[GROUNDING REFRESH — hidden from transcript]")
-
-        # Actual question
-        q_text = q["text"]
-        if q.get("ask_why"):
-            q_text += "\nPlease think through your reasoning before answering."
-
-        conversation.append({"role": "user", "content": q_text})
-        assembled_parts.append(f"\n[Q{q['sort_order']}] {q_text}")
-
-        response, tin, tout = await call_llm_messages(
-            conversation, model=model, provider=provider, temperature=0.7
-        )
-        total_in += tin
-        total_out += tout
-        conversation.append({"role": "assistant", "content": response})
-        assembled_parts.append(f"[A{q['sort_order']}] {response}")
-
-    transcript = "\n".join(assembled_parts)
-    assembled_prompt = assembled_parts[0]  # system message
-    return transcript, total_in, total_out, drift_scores, drift_flagged, assembled_prompt
-
-
-async def _execute_task(
-    task_id: str,
-    run_config: dict[str, Any],
-    db: AsyncSession,
-) -> None:
-    """
-    Full execution of a single simulation task (Pass 1 + Pass 2).
-    Updates the task record in-place.
-    """
-    task = await db.get(SimulationTask, task_id)
-    if not task:
-        return
-
-    # Decide what needs to run:
-    #   pass2_only = Pass 1 already completed, only Pass 2 needs (re-)running
-    #   Otherwise, Pass 1 must be pending/failed to proceed
-    pass2_only = (
-        task.pass1_status == "completed"
-        and task.pass2_status in ("pending", "failed")
-    )
-    if not pass2_only and task.pass1_status not in ("pending", "failed"):
-        return  # nothing to do (completed, running, cancelled, etc.)
-
-    run = await db.get(SimulationRun, task.run_id)
-    if not run or run.status == "cancelled":
-        return
-
-    persona = await db.get(Persona, task.persona_id)
-    if not persona:
-        task.pass1_status = "failed"
-        task.pass1_error = "Persona not found"
-        await db.commit()
-        return
-
-    model_pass1 = run_config.get("model_pass1", settings.model_pass1)
-    model_pass2 = run_config.get("model_pass2", settings.model_pass2)
-    provider_pass1 = run_config.get("provider_pass1", settings.provider_pass1)
-    provider_pass2 = run_config.get("provider_pass2", settings.provider_pass2)
-    dual_extraction = run_config.get("dual_extraction", True)
-    execution_mode = run_config.get("execution_mode", "pooled")
-    drift_detection_enabled = run_config.get("drift_detection_enabled", True)
-    exp_config = run_config.get("exp_config", {})
-
-    traits = persona.traits_json
-    backstory = persona.backstory or ""
-
-    # ── Pass 1 ────────────────────────────────────────────────────────────────
-    if not pass2_only:
-        task.pass1_status = "running"
         await db.commit()
 
+
+async def _run_is_cancelled(run_id: str) -> bool:
+    async with AsyncSessionLocal() as db:
+        status = await db.scalar(select(SimulationRun.status).where(SimulationRun.id == run_id))
+    return status is None or status == "cancelled"
+
+
+# ── Single task ───────────────────────────────────────────────────────────────
+
+async def _update_task(task_id: str, **values: Any) -> None:
+    async with AsyncSessionLocal() as db:
+        await db.execute(update(SimulationTask).where(SimulationTask.id == task_id).values(**values))
+        await db.commit()
+
+
+async def _execute_task(task_id: str, cfg: dict[str, Any], exp_config: Any) -> None:
+    """Run whatever is still pending for one task (Pass 1 + Pass 2, or Pass 2 only)."""
+    async with AsyncSessionLocal() as db:
+        task = await db.get(SimulationTask, task_id)
+        if not task:
+            return
+        run_pass1 = task.pass1_status in ("pending", "failed")
+        run_pass2 = run_pass1 or (task.pass1_status == "completed" and task.pass2_status in ("pending", "failed"))
+        if not run_pass2:
+            return
+        if await _run_is_cancelled(task.run_id):
+            return
+        persona = await db.get(Persona, task.persona_id)
+        run_id, injected_vars, transcript = task.run_id, dict(task.injected_vars or {}), task.raw_transcript
+        traits = persona.traits_json if persona else {}
+        backstory = (persona.backstory or "") if persona else ""
+
+    if run_pass1:
+        if exp_config is None:
+            await _update_task(task_id, pass1_status="failed", pass1_error="Experiment not found")
+            return
+        if persona is None:
+            await _update_task(task_id, pass1_status="failed", pass1_error="Persona not found")
+            return
+        await _update_task(task_id, pass1_status="running", pass1_error=None)
         try:
-            stored_vars = task.injected_vars or {}
-            if execution_mode == "dedicated":
-                transcript, tin, tout, drift_scores, drift_flagged, assembled = await _run_dedicated_interview(
-                    backstory, traits, exp_config, model_pass1, model_pass2,
-                    provider=provider_pass1, provider_pass2=provider_pass2,
-                    run_id=task.run_id, db=db,
-                    injected_vars=stored_vars,
-                    drift_detection_enabled=drift_detection_enabled,
-                )
-                task.drift_scores = drift_scores
-                task.drift_flagged = drift_flagged
-            else:
-                transcript, tin, tout, assembled = await _run_pooled_interview(
-                    backstory, traits, exp_config, model_pass1, provider=provider_pass1,
-                    injected_vars=stored_vars,
-                )
-
-            task.raw_transcript = transcript
-            task.pass1_prompt = assembled
-            task.pass1_tokens_in = tin
-            task.pass1_tokens_out = tout
-            task.pass1_cost_usd = get_price(model_pass1, tin, tout)
-            task.pass1_status = "completed"
-            await db.commit()
-
-        except _RunCancelled:
-            task.pass1_status = "cancelled"
-            await db.commit()
+            context, questions, _ = resolve_interview(exp_config, injected_vars)
+            result = await run_interview(
+                cfg["execution_mode"], backstory, traits, context, questions,
+                cfg["model_pass1"], cfg["provider_pass1"],
+                **({
+                    "drift_detection": cfg["drift_detection_enabled"],
+                    "scorer_model": cfg["model_pass2"],
+                    "scorer_provider": cfg["provider_pass2"],
+                    "is_cancelled": lambda: _run_is_cancelled(run_id),
+                } if cfg["execution_mode"] == "dedicated" else {}),
+            )
+        except InterviewCancelled:
+            await _update_task(task_id, pass1_status="cancelled", pass2_status="cancelled")
             return
-
         except Exception as e:
-            task.pass1_status = "failed"
-            task.pass1_error = str(e)
-            await db.commit()
             logger.error(f"Task {task_id} Pass 1 failed: {e}")
-            run.failed_tasks = (run.failed_tasks or 0) + 1
-            await db.commit()
+            await _update_task(task_id, pass1_status="failed", pass1_error=str(e))
             return
 
-    # ── Cancellation check between passes ────────────────────────────────────
-    await db.refresh(run)
-    if run.status == "cancelled":
-        task.pass2_status = "cancelled"
-        await db.commit()
-        return
-
-    # ── Pass 2 ────────────────────────────────────────────────────────────────
-    output_schema = run_config.get("output_schema", [])
-    if not output_schema:
-        task.pass2_status = "completed"
-        task.extracted_json = {}
-        await db.commit()
-        return
-
-    task.pass2_status = "running"
-    await db.commit()
-
-    try:
-        result = await extract_with_confidence(
-            transcript=task.raw_transcript,
-            output_schema=output_schema,
-            model=model_pass2,
-            provider=provider_pass2,
-            dual=dual_extraction,
+        transcript = result.transcript
+        await _update_task(
+            task_id,
+            raw_transcript=transcript,
+            pass1_prompt=result.assembled_prompt,
+            pass1_tokens_in=result.tokens_in,
+            pass1_tokens_out=result.tokens_out,
+            pass1_cost_usd=get_price(cfg["model_pass1"], result.tokens_in, result.tokens_out),
+            drift_scores=result.drift_scores or None,
+            drift_flagged=result.drift_flagged,
+            pass1_status="completed",
         )
-        task.extracted_json = result["extracted_json"]
-        task.extraction_confidence = result["extraction_confidence"]
-        task.extraction_disagreements = result["extraction_disagreements"]
-        task.pass2_tokens_in = result["pass2_tokens_in"]
-        task.pass2_tokens_out = result["pass2_tokens_out"]
-        task.pass2_cost_usd = result["pass2_cost_usd"]
-        task.pass2_status = "completed"
 
+    if await _run_is_cancelled(run_id):
+        await _update_task(task_id, pass2_status="cancelled")
+        return
+
+    output_schema = cfg["output_schema"]
+    if not output_schema:
+        await _update_task(task_id, pass2_status="completed", extracted_json={})
+        return
+
+    await _update_task(task_id, pass2_status="running", pass2_error=None)
+    try:
+        ext = await extract_with_confidence(
+            transcript=transcript or "",
+            output_schema=output_schema,
+            model=cfg["model_pass2"],
+            provider=cfg["provider_pass2"],
+            dual=cfg["dual_extraction"],
+        )
     except Exception as e:
-        task.pass2_status = "failed"
-        task.pass2_error = str(e)
         logger.error(f"Task {task_id} Pass 2 failed: {e}")
-        run.failed_tasks = (run.failed_tasks or 0) + 1
-        await db.commit()
+        await _update_task(task_id, pass2_status="failed", pass2_error=str(e))
         return
 
-    # ── Update run progress ───────────────────────────────────────────────────
-    await db.refresh(run)
-    if run.status == "cancelled":
-        # Don't overwrite cancelled status
-        await db.commit()
+    await _update_task(
+        task_id,
+        extracted_json=ext["extracted_json"],
+        extraction_confidence=ext["extraction_confidence"],
+        extraction_disagreements=ext["extraction_disagreements"],
+        pass2_tokens_in=ext["pass2_tokens_in"],
+        pass2_tokens_out=ext["pass2_tokens_out"],
+        pass2_cost_usd=ext["pass2_cost_usd"],
+        pass2_status="completed",
+    )
+
+
+async def _execute_tasks(run_id: str, task_ids: list[str], cfg: dict[str, Any], exp_config: Any) -> None:
+    """
+    Run tasks with bounded parallelism. The global LLM limiter caps API calls;
+    this cap keeps the number of in-flight tasks (and DB sessions) in step.
+    """
+    sem = asyncio.Semaphore(max(1, settings.max_concurrent_tasks))
+    last_refresh = 0.0
+
+    async def one(task_id: str) -> None:
+        nonlocal last_refresh
+        async with sem:
+            try:
+                await _execute_task(task_id, cfg, exp_config)
+            except Exception:
+                logger.exception(f"Task {task_id}: unexpected error")
+        now = time.monotonic()
+        if now - last_refresh >= 1.0:   # progress is a full recount; throttle it
+            last_refresh = now
+            await refresh_run_progress(run_id)
+
+    await asyncio.gather(*(one(tid) for tid in task_ids))
+    await refresh_run_progress(run_id)
+
+
+# ── Backstories for personas created at launch ────────────────────────────────
+
+async def _fill_missing_backstories(run_id: str) -> None:
+    async with AsyncSessionLocal() as db:
+        run = await db.get(SimulationRun, run_id)
+        audience = await db.get(Audience, (run.locked_config or {}).get("audience_id", "")) if run else None
+        personas = (await db.execute(
+            select(Persona)
+            .join(SimulationTask, SimulationTask.persona_id == Persona.id)
+            .where(SimulationTask.run_id == run_id, Persona.backstory.is_(None))
+            .distinct()
+        )).scalars().all()
+        targets = [(p.id, p.traits_json) for p in personas]
+    if not targets:
         return
 
-    run.completed_tasks = (run.completed_tasks or 0) + 1
-    run.total_cost_usd = (run.total_cost_usd or 0.0) + (task.pass1_cost_usd or 0.0) + (task.pass2_cost_usd or 0.0)
+    template = audience.backstory_prompt_template if audience else None
+    logger.info(f"Run {run_id}: generating backstories for {len(targets)} personas")
 
-    all_done = run.completed_tasks + run.failed_tasks >= run.total_tasks
-    if all_done:
-        run.status = "completed" if run.failed_tasks == 0 else "failed"
-        run.completed_at = datetime.now(timezone.utc)
+    async def make(traits: dict[str, Any]) -> str:
+        try:
+            return await generate_backstory(
+                traits, settings.step_model("backstory"),
+                provider=settings.step_provider("backstory"), custom_template=template,
+            )
+        except Exception as e:
+            logger.warning(f"Backstory generation failed: {e}")
+            return build_default_backstory(traits)
 
-    await db.commit()
+    stories = await asyncio.gather(*(make(traits) for _, traits in targets))
+    async with AsyncSessionLocal() as db:
+        for (pid, _), story in zip(targets, stories):
+            await db.execute(update(Persona).where(Persona.id == pid).values(backstory=story))
+        await db.commit()
 
 
-async def launch_run(
-    run_id: str,
-    db_factory: Any,
-) -> None:
-    """Background task entry point. Runs all tasks in the simulation run."""
-    from ..database import AsyncSessionLocal
+# ── Entry points (background tasks) ───────────────────────────────────────────
+
+async def launch_run(run_id: str) -> None:
+    """Run every task of a run that still has work to do."""
     try:
         async with AsyncSessionLocal() as db:
             run = await db.get(SimulationRun, run_id)
-            if not run:
-                logger.warning(f"launch_run: run {run_id} not found")
+            if not run or run.status == "cancelled":
                 return
-
             run.status = "running"
+            run.completed_at = None
             await db.commit()
+            cfg = run_settings(run)
+            try:
+                exp_config = await load_experiment_config(run.experiment_id, db)
+            except ValueError:
+                exp_config = None
+            task_ids = list((await db.execute(
+                select(SimulationTask.id).where(SimulationTask.run_id == run_id)
+            )).scalars().all())
 
-            # Load tasks
-            tasks_result = await db.execute(
-                select(SimulationTask).where(SimulationTask.run_id == run_id)
-            )
-            tasks = tasks_result.scalars().all()
-
-            # ── Generate any missing backstories before execution ─────────────
-            # Personas created via fresh-sample during launch have backstory=None.
-            # Generate them here in the background so the HTTP response was instant.
-            persona_ids_needed = list({t.persona_id for t in tasks})
-            personas_result = await db.execute(
-                select(Persona).where(Persona.id.in_(persona_ids_needed))
-            )
-            personas_map = {p.id: p for p in personas_result.scalars().all()}
-            missing = [p for p in personas_map.values() if not p.backstory]
-            if missing:
-                logger.info(f"launch_run: generating backstories for {len(missing)} personas")
-                for p in missing:
-                    try:
-                        p.backstory = await generate_backstory(
-                            p.traits_json,
-                            settings.effective_backstory_model,
-                            provider=settings.effective_backstory_provider,
-                        )
-                    except Exception as be:
-                        logger.warning(f"Backstory generation failed for persona {p.id}: {be}")
-                        p.backstory = _build_default_backstory(p.traits_json)  # trait profile fallback
-                await db.commit()
-
-            # Reconstruct run config from locked_config
-            locked = run.locked_config
-            exp_config = await _load_experiment_config(run.experiment_id, db)
-
-        # Build full run_config — providers read from live settings so retries
-        # pick up any provider changes the user made since the run was created.
-        run_config = {
-            "model_pass1": run.model_pass1,
-            "model_pass2": run.model_pass2,
-            "provider_pass1": settings.provider_pass1,
-            "provider_pass2": settings.provider_pass2,
-            "dual_extraction": locked.get("dual_extraction", True),
-            "execution_mode": locked.get("execution_mode", "pooled"),
-            "output_schema": locked.get("output_schema", []),
-            "drift_detection_enabled": locked.get("drift_detection_enabled", True),
-            "exp_config": exp_config,
-            "est_tokens_per_task": locked.get("est_tokens_per_task", 2000),
-        }
-
-        pending_tasks = [t for t in tasks if t.pass1_status in ("pending", "failed")]
-        logger.info(
-            f"launch_run: run={run_id} model_pass1={run.model_pass1} "
-            f"total_tasks={len(tasks)} pending={len(pending_tasks)}"
-        )
-
-        executor = RateLimitedExecutor()
-        await executor.execute_batch(tasks, run_config, db_factory=AsyncSessionLocal)
+        await _fill_missing_backstories(run_id)
+        logger.info(f"launch_run: run={run_id} model_pass1={cfg['model_pass1']} tasks={len(task_ids)}")
+        await _execute_tasks(run_id, task_ids, cfg, exp_config)
     except Exception as e:
         logger.error(f"launch_run: unexpected error for run {run_id}: {e}", exc_info=True)
 
 
 async def retry_failed_tasks(run_id: str) -> None:
-    """
-    Smart retry: Pass 1 failures → full retry. Pass 2 failures → extraction only.
-    Always uses the current settings model names so provider changes take effect.
-    """
-    from ..database import AsyncSessionLocal
-    try:
-        async with AsyncSessionLocal() as db:
-            run = await db.get(SimulationRun, run_id)
-            if not run:
-                logger.warning(f"retry_failed_tasks: run {run_id} not found")
-                return
+    """Smart retry: Pass 1 failures → full retry. Pass 2 failures → extraction only."""
+    async with AsyncSessionLocal() as db:
+        t = SimulationTask
+        await db.execute(
+            update(t).where(t.run_id == run_id, t.pass1_status == "failed")
+            .values(pass1_status="pending", pass2_status="pending", raw_transcript=None,
+                    extracted_json=None, pass1_error=None)
+        )
+        await db.execute(
+            update(t).where(t.run_id == run_id, t.pass1_status == "completed", t.pass2_status == "failed")
+            .values(pass2_status="pending", extracted_json=None, pass2_error=None)
+        )
+        await db.execute(update(SimulationRun).where(SimulationRun.id == run_id).values(status="running"))
+        await db.commit()
+    await refresh_run_progress(run_id)
+    await launch_run(run_id)
 
-            tasks_result = await db.execute(
-                select(SimulationTask)
-                .where(SimulationTask.run_id == run_id)
-                .where(
-                    (SimulationTask.pass1_status == "failed") |
-                    (SimulationTask.pass2_status == "failed")
-                )
-            )
-            tasks = tasks_result.scalars().all()
-            logger.info(f"retry_failed_tasks: found {len(tasks)} failed task(s) for run {run_id}")
 
-            for task in tasks:
-                if task.pass1_status == "failed":
-                    task.pass1_status = "pending"
-                    task.pass2_status = "pending"
-                    task.raw_transcript = None
-                    task.extracted_json = None
-                    task.pass1_error = None
-                elif task.pass2_status == "failed" and task.pass1_status == "completed":
-                    task.pass2_status = "pending"
-                    task.extracted_json = None
-                    task.pass2_error = None
-
-            run.status = "running"
-            run.failed_tasks = 0
-            # Use current settings models so retries hit the currently configured provider
-            run.model_pass1 = settings.model_pass1
-            run.model_pass2 = settings.model_pass2
-            logger.info(f"retry_failed_tasks: using models pass1={run.model_pass1}, pass2={run.model_pass2}")
-            await db.commit()
-
-        await launch_run(run_id, db_factory=AsyncSessionLocal)
-    except Exception as e:
-        logger.error(f"retry_failed_tasks: unexpected error for run {run_id}: {e}", exc_info=True)
+async def resume_run(run_id: str) -> None:
+    """Re-queue tasks that were cancelled or interrupted mid-flight, then continue the run."""
+    async with AsyncSessionLocal() as db:
+        t = SimulationTask
+        await db.execute(
+            update(t).where(t.run_id == run_id, t.pass1_status.in_(("cancelled", "running")))
+            .values(pass1_status="pending", pass2_status="pending")
+        )
+        await db.execute(
+            update(t).where(t.run_id == run_id, t.pass1_status == "completed",
+                            t.pass2_status.in_(("cancelled", "running")))
+            .values(pass2_status="pending")
+        )
+        await db.execute(update(SimulationRun).where(SimulationRun.id == run_id).values(status="running"))
+        await db.commit()
+    await refresh_run_progress(run_id)
+    await launch_run(run_id)
 
 
 async def re_extract_run(run_id: str, schema_version: int | None = None) -> None:
-    """Re-run Pass 2 only for all completed Pass 1 tasks, using the latest (or specified) schema."""
-    from ..database import AsyncSessionLocal
+    """Re-run Pass 2 for all completed interviews using the latest (or given) schema."""
     async with AsyncSessionLocal() as db:
         run = await db.get(SimulationRun, run_id)
         if not run:
             return
-
-        # Find schema
         q = select(OutputSchema).where(OutputSchema.experiment_id == run.experiment_id)
-        if schema_version:
-            q = q.where(OutputSchema.version == schema_version)
-        else:
-            q = q.order_by(OutputSchema.version.desc())
-        schema_result = await db.execute(q)
-        schema = schema_result.scalars().first()
+        q = q.where(OutputSchema.version == schema_version) if schema_version else q.order_by(OutputSchema.version.desc())
+        schema = (await db.execute(q)).scalars().first()
         if not schema:
             return
-
-        tasks_result = await db.execute(
-            select(SimulationTask)
-            .where(SimulationTask.run_id == run_id)
-            .where(SimulationTask.pass1_status == "completed")
+        # The run's locked schema drives analysis field types, so it must follow the re-extraction.
+        run.locked_config = {**(run.locked_config or {}), "output_schema": schema.schema_json,
+                             "schema_version": schema.version}
+        run.status = "running"
+        await db.execute(
+            update(SimulationTask)
+            .where(SimulationTask.run_id == run_id, SimulationTask.pass1_status == "completed")
+            .values(pass2_status="pending", extracted_json=None, extraction_confidence=None,
+                    extraction_disagreements=None, pass2_error=None, pass2_cost_usd=None)
         )
-        tasks = tasks_result.scalars().all()
-
-        for task in tasks:
-            task.pass2_status = "pending"
-            task.extracted_json = None
-            task.pass2_error = None
-
         await db.commit()
+        cfg = run_settings(run)
+        task_ids = list((await db.execute(
+            select(SimulationTask.id).where(SimulationTask.run_id == run_id, SimulationTask.pass2_status == "pending")
+        )).scalars().all())
 
-    run_config = {
-        "model_pass1": settings.model_pass1,
-        "model_pass2": settings.model_pass2,
-        "dual_extraction": True,
-        "execution_mode": "pooled",
-        "output_schema": schema.schema_json,
-        "exp_config": {},
-        "est_tokens_per_task": 1000,
-    }
+    await _execute_tasks(run_id, task_ids, cfg, exp_config=None)
 
-    executor = RateLimitedExecutor()
+
+async def recover_interrupted_runs() -> None:
+    """
+    Background tasks die with the process. On startup, mark runs that were still
+    active as cancelled (with their in-flight tasks) so they can be resumed —
+    without silently spending money on restart.
+    """
     async with AsyncSessionLocal() as db:
-        tasks_result = await db.execute(
-            select(SimulationTask)
-            .where(SimulationTask.run_id == run_id)
-            .where(SimulationTask.pass2_status == "pending")
-        )
-        pending_tasks = tasks_result.scalars().all()
-
-    await executor.execute_batch(pending_tasks, run_config, db_factory=AsyncSessionLocal)
+        run_ids = list((await db.execute(
+            select(SimulationRun.id).where(SimulationRun.status.in_(ACTIVE_STATUSES))
+        )).scalars().all())
+        if not run_ids:
+            return
+        t = SimulationTask
+        await db.execute(update(t).where(t.run_id.in_(run_ids), t.pass1_status == "running")
+                         .values(pass1_status="cancelled", pass2_status="cancelled"))
+        await db.execute(update(t).where(t.run_id.in_(run_ids), t.pass2_status == "running")
+                         .values(pass2_status="cancelled"))
+        await db.execute(update(SimulationRun).where(SimulationRun.id.in_(run_ids)).values(status="cancelled"))
+        await db.commit()
+    logger.warning(f"Marked {len(run_ids)} interrupted run(s) as cancelled; resume them from the run page")

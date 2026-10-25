@@ -1,27 +1,30 @@
 from __future__ import annotations
+import csv
 import io
-import json
+import random
 import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..database import get_db
 from ..models.audience import Persona
-from ..models.experiment import Experiment, ExperimentDistVariable, ExperimentVariable, OutputSchema, Question
+from ..models.experiment import Experiment
 from ..models.simulation import SimulationRun, SimulationTask
 from ..schemas.simulation import (
     LaunchRequest, ReExtractRequest,
     SimulationRunOut, SimulationTaskDetail, SimulationTaskSummary,
 )
-from ..services.execution import launch_run, re_extract_run, retry_failed_tasks
+from ..services.execution import (
+    ACTIVE_STATUSES, FINISHED_STATUSES, launch_run, re_extract_run, retry_failed_tasks,
+    resume_run as resume_run_task,
+)
+from ..services.interview import load_experiment_config, resolve_interview
 from ..services.sampling import sample_correlated_population
-from ..services.backstory import generate_backstory
-from ..services.variable_resolution import resolve_variables, resolve_dist_variables
 
 router = APIRouter(prefix="/api", tags=["runs"])
 
@@ -51,135 +54,74 @@ async def launch_simulation(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Launch a simulation run. Returns 202 immediately; execution runs in background.
-    Requires the X-Confirm: true header to prevent accidental launches.
-    """
+    """Launch a simulation run. Returns 202 immediately; execution runs in background."""
     exp = await db.get(Experiment, experiment_id)
     if not exp:
         raise HTTPException(status_code=404, detail="Experiment not found")
 
-    # ── Resolve which personas to use ────────────────────────────────────────
-    import random
-
     async def _make_fresh_personas(n: int) -> list[str]:
         """Sample n new personas WITHOUT backstory (fast) and persist them.
-        Backstories are generated lazily inside launch_run before task execution."""
+        Backstories are generated inside launch_run before task execution."""
         raw_traits = await sample_correlated_population(exp.audience_id, n, db)
         ids: list[str] = []
         for traits in raw_traits:
-            p = Persona(
-                id=str(uuid.uuid4()),
-                audience_id=exp.audience_id,
-                traits_json=traits,
-                backstory=None,
-            )
+            p = Persona(id=str(uuid.uuid4()), audience_id=exp.audience_id, traits_json=traits, backstory=None)
             db.add(p)
             ids.append(p.id)
         return ids
 
     if body.persona_ids:
-        # Explicit list supplied by caller
         persona_ids = body.persona_ids[: body.population_size]
         if len(persona_ids) < body.population_size:
             raise HTTPException(status_code=400, detail="Not enough persona_ids for the requested population_size")
-
     elif body.sample_fresh:
-        # User explicitly asked for a new sample
         persona_ids = await _make_fresh_personas(body.population_size)
-
     else:
-        # Default: reuse existing personas already sampled for this audience
-        existing_result = await db.execute(
-            select(Persona)
-            .where(Persona.audience_id == exp.audience_id)
-        )
-        existing = existing_result.scalars().all()
+        # Default: reuse the audience's active panel, topping up with fresh personas if short
+        existing = (await db.execute(
+            select(Persona.id).where(Persona.audience_id == exp.audience_id, Persona.archived.is_(False))
+        )).scalars().all()
+        persona_ids = random.sample(list(existing), min(body.population_size, len(existing)))
+        shortage = body.population_size - len(persona_ids)
+        if shortage > 0:
+            persona_ids += await _make_fresh_personas(shortage)
 
-        if existing:
-            chosen = random.sample(existing, min(body.population_size, len(existing)))
-            persona_ids = [p.id for p in chosen]
-            shortage = body.population_size - len(persona_ids)
-            if shortage > 0:
-                # Not enough personas in pool — top up with fresh ones
-                persona_ids += await _make_fresh_personas(shortage)
-        else:
-            # Audience has no personas yet — sample fresh automatically
-            persona_ids = await _make_fresh_personas(body.population_size)
+    config = await load_experiment_config(experiment_id, db)
+    model_pass1 = body.model_pass1 or settings.model_pass1
+    model_pass2 = body.model_pass2 or settings.model_pass2
 
-    # Resolve variables for each persona to get injected_vars
-    vars_result = await db.execute(
-        select(ExperimentVariable).where(ExperimentVariable.experiment_id == experiment_id)
-    )
-    exp_vars = vars_result.scalars().all()
-
-    dist_vars_result = await db.execute(
-        select(ExperimentDistVariable).where(ExperimentDistVariable.experiment_id == experiment_id)
-    )
-    dist_vars_for_task = dist_vars_result.scalars().all()
-
-    q_result = await db.execute(
-        select(Question).where(Question.experiment_id == experiment_id)
-    )
-    questions_for_vars = q_result.scalars().all()
-
-    # Load output schema for locked_config
-    schema_result = await db.execute(
-        select(OutputSchema)
-        .where(OutputSchema.experiment_id == experiment_id)
-        .order_by(OutputSchema.version.desc())
-    )
-    schema = schema_result.scalars().first()
-    output_schema = schema.schema_json if schema else []
-
-    # Create run
+    # Everything execution needs is locked here, so retries and resumes reproduce the run.
     locked_config = {
         "experiment_id": experiment_id,
         "audience_id": exp.audience_id,
         "execution_mode": exp.execution_mode,
         "dual_extraction": body.dual_extraction,
-        "output_schema": output_schema,
+        "output_schema": config.output_schema,
         "drift_detection_enabled": exp.drift_detection_enabled,
-        "est_tokens_per_task": 2000,
+        "provider_pass1": settings.provider_pass1,
+        "provider_pass2": settings.provider_pass2,
     }
 
     run = SimulationRun(
         id=str(uuid.uuid4()),
         experiment_id=experiment_id,
-        model_pass1=body.model_pass1 or settings.model_pass1,
-        model_pass2=body.model_pass2 or settings.model_pass2,
+        model_pass1=model_pass1,
+        model_pass2=model_pass2,
         status="pending",
-        total_tasks=body.population_size,
+        total_tasks=len(persona_ids),
         locked_config=locked_config,
     )
     db.add(run)
 
-    # Create tasks — resolve ALL variable placeholders (global_context + every question
-    # text) into a single cache so injected_vars matches exactly what the LLM receives.
+    # Sample every {variable} once per task so injected_vars matches exactly what the LLM receives.
     for pid in persona_ids:
-        resolved_cache: dict[str, str] = {}
-        dist_cache: dict[str, str] = {}
-        # Scan global context
-        resolve_variables(exp.global_context, exp_vars, resolved_cache)
-        resolve_dist_variables(exp.global_context, dist_vars_for_task, dist_cache)
-        # Scan every question text so var_* captures all placeholders, not just those in context
-        for q in questions_for_vars:
-            resolve_variables(q.question_text, exp_vars, resolved_cache)
-            resolve_dist_variables(q.question_text, dist_vars_for_task, dist_cache)
-        task = SimulationTask(
-            id=str(uuid.uuid4()),
-            run_id=run.id,
-            persona_id=pid,
-            injected_vars={**resolved_cache, **dist_cache},
-        )
-        db.add(task)
+        _, _, injected = resolve_interview(config)
+        db.add(SimulationTask(id=str(uuid.uuid4()), run_id=run.id, persona_id=pid, injected_vars=injected))
 
     await db.commit()
     await db.refresh(run)
 
-    # Launch background
-    background_tasks.add_task(launch_run, run.id, None)
-
+    background_tasks.add_task(launch_run, run.id)
     return run
 
 
@@ -196,14 +138,15 @@ async def get_run(run_id: str, db: AsyncSession = Depends(get_db)):
 @router.get("/runs/{run_id}/progress")
 async def get_run_progress(run_id: str, db: AsyncSession = Depends(get_db)):
     """Lightweight task-level progress counts — used by the sidebar tracker."""
-    from sqlalchemy import func
     result = await db.execute(
         select(
             func.count().filter(SimulationTask.pass1_status == "running").label("p1_running"),
             func.count().filter(SimulationTask.pass1_status == "completed").label("p1_done"),
             func.count().filter(SimulationTask.pass2_status == "running").label("p2_running"),
             func.count().filter(SimulationTask.pass2_status == "completed").label("p2_done"),
-            func.count().filter(SimulationTask.pass1_status == "failed").label("failed"),
+            func.count().filter(
+                (SimulationTask.pass1_status == "failed") | (SimulationTask.pass2_status == "failed")
+            ).label("failed"),
             func.count().label("total"),
         ).where(SimulationTask.run_id == run_id)
     )
@@ -288,6 +231,8 @@ async def retry_run(run_id: str, background_tasks: BackgroundTasks, db: AsyncSes
     run = await db.get(SimulationRun, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+    if run.status in ACTIVE_STATUSES:
+        raise HTTPException(status_code=400, detail="Run is still in progress")
     background_tasks.add_task(retry_failed_tasks, run_id)
     return {"status": "retry_queued", "run_id": run_id}
 
@@ -311,12 +256,12 @@ async def prune_runs(
     """
     Delete finished runs (optionally scoped to one experiment).
     - include_completed=false (default): deletes failed + cancelled only
-    - include_completed=true:            deletes failed + cancelled + completed
+    - include_completed=true:            also deletes completed (with or without errors)
     Running and pending runs are never touched.
     """
     statuses = ["failed", "cancelled"]
     if include_completed:
-        statuses.append("completed")
+        statuses += ["completed", "completed_with_errors"]
     q = select(SimulationRun).where(SimulationRun.status.in_(statuses))
     if experiment_id:
         q = q.where(SimulationRun.experiment_id == experiment_id)
@@ -334,17 +279,15 @@ async def prune_runs(
 @router.delete("/runs/{run_id}", status_code=204)
 async def delete_run(run_id: str, db: AsyncSession = Depends(get_db)):
     """
-    Delete a single run and all its tasks.
-    Only allowed when the run is in 'completed' or 'cancelled' status.
+    Delete a single run and all its tasks. Active runs must be cancelled first.
     """
     run = await db.get(SimulationRun, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-    if run.status not in ("completed", "cancelled", "failed"):
+    if run.status not in FINISHED_STATUSES:
         raise HTTPException(
             status_code=400,
-            detail=f"Cannot delete run with status '{run.status}'. "
-                   "Only completed, cancelled, or failed runs may be deleted.",
+            detail=f"Cannot delete a run that is {run.status}. Cancel it first.",
         )
     await db.execute(delete(SimulationTask).where(SimulationTask.run_id == run_id))
     await db.delete(run)
@@ -353,15 +296,15 @@ async def delete_run(run_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("/runs/{run_id}/resume", status_code=202)
 async def resume_run(run_id: str, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
-    """Resume a cancelled run — re-runs all pending tasks."""
+    """Resume a cancelled or interrupted run — re-queues tasks that never finished."""
     run = await db.get(SimulationRun, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-    if run.status not in ("cancelled", "failed"):
+    if run.status != "cancelled":
         raise HTTPException(status_code=400, detail=f"Run cannot be resumed (status: {run.status})")
     run.status = "running"
     await db.commit()
-    background_tasks.add_task(launch_run, run_id, None)
+    background_tasks.add_task(resume_run_task, run_id)
     return {"status": "resumed", "run_id": run_id}
 
 
@@ -375,6 +318,8 @@ async def re_extract(
     run = await db.get(SimulationRun, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+    if run.status in ACTIVE_STATUSES:
+        raise HTTPException(status_code=400, detail="Run is still in progress")
     background_tasks.add_task(re_extract_run, run_id, body.schema_version)
     return {"status": "re_extract_queued", "run_id": run_id}
 
@@ -423,14 +368,12 @@ async def export_run(
         rows.append(row)
 
     if format == "csv":
-        if not rows:
-            return StreamingResponse(io.StringIO(""), media_type="text/csv")
-        headers = list(rows[0].keys())
+        # Union of keys across rows: a failed task early on must not hide output columns.
+        headers = list(dict.fromkeys(k for row in rows for k in row))
         buf = io.StringIO()
-        buf.write(",".join(headers) + "\n")
-        for row in rows:
-            buf.write(",".join(str(row.get(h, "")) for h in headers) + "\n")
-        buf.seek(0)
+        writer = csv.DictWriter(buf, fieldnames=headers, restval="")
+        writer.writeheader()
+        writer.writerows(rows)
         return StreamingResponse(
             io.BytesIO(buf.getvalue().encode()),
             media_type="text/csv",
@@ -458,7 +401,7 @@ async def export_run(
         header_fill = PatternFill("solid", fgColor="4F46E5")  # indigo (used in Personas sheet)
 
         if rows:
-            headers = list(rows[0].keys())
+            headers = list(dict.fromkeys(k for row in rows for k in row))
 
             # Colour scheme per column group:
             #   indigo  = metadata (task/persona/status/cost)
@@ -519,11 +462,7 @@ async def export_run(
 
         # ── Sheet 2: Personas ─────────────────────────────────────────────────
         persona_ids = list({task.persona_id for task in tasks})
-        from ..models.audience import Persona as PersonaModel
-        from sqlalchemy import select as sa_select
-        personas_result = await db.execute(
-            sa_select(PersonaModel).where(PersonaModel.id.in_(persona_ids))
-        )
+        personas_result = await db.execute(select(Persona).where(Persona.id.in_(persona_ids)))
         personas = {p.id: p for p in personas_result.scalars().all()}
 
         ws_p = wb.create_sheet(title="Personas")
