@@ -257,6 +257,13 @@ export default function RunDetailPage() {
               </div>
             </div>
             <ProgressBar value={progress} color={progressColor} showLabel size="md" />
+            {run.batch_state && (
+              <p className="mt-3 text-xs text-gray-500">
+                Waiting on the {run.batch_state.provider} batch API ({run.batch_state.phase}):{' '}
+                <span className="font-mono text-gray-700">{run.batch_state.done + run.batch_state.failed} / {run.batch_state.total}</span> requests processed
+                · submitted {fmtDateTime(run.batch_state.submitted_at)}. Batches finish within 24 hours; you can close this page.
+              </p>
+            )}
           </CardBody>
         </Card>
 

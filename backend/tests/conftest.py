@@ -15,7 +15,7 @@ import pytest  # noqa: E402
 
 from app import database  # noqa: E402
 from app.main import app  # noqa: E402
-from app.services import interview, llm_client  # noqa: E402
+from app.services import extraction, interview, llm_client  # noqa: E402
 
 
 class FakeLLM:
@@ -24,6 +24,7 @@ class FakeLLM:
     def __init__(self):
         self.calls: list[dict] = []
         self.fail_extraction = False
+        self.fail_interviews = False
 
     async def __call__(self, messages, model, provider="openai", temperature=0.7,
                        max_tokens=4096, json_mode=False, json_schema=None):
@@ -48,6 +49,8 @@ class FakeLLM:
             return json.dumps({"data": data, "confidence": conf}), 100, 20
         if json_mode:
             return json.dumps({"score": 0.95, "drift_indicators": []}), 30, 10
+        if self.fail_interviews:
+            raise RuntimeError("provider unavailable")
         last = messages[-1]["content"]
         return f"My answer to: {last[:40]}", 200, 40
 
@@ -57,6 +60,7 @@ def fake_llm(monkeypatch):
     fake = FakeLLM()
     monkeypatch.setattr(llm_client, "call_llm_messages", fake)
     monkeypatch.setattr(interview, "call_llm_messages", fake)
+    monkeypatch.setattr(extraction, "call_llm_messages", fake)
     return fake
 
 

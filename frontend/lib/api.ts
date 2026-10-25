@@ -143,10 +143,15 @@ export const isRunActive = (status: string) => ACTIVE_RUN_STATUSES.includes(stat
 /** Finished runs that produced at least some results worth analysing. */
 export const hasResults = (status: string) => status === 'completed' || status === 'completed_with_errors'
 
+export interface BatchState {
+  phase: 'interviews' | 'extraction'; provider: string; batches: string[];
+  submitted_at: string; total: number; done: number; failed: number;
+}
 export interface SimulationRun {
   id: string; experiment_id: string; model_pass1: string; model_pass2: string;
   experiment_name?: string | null; run_number?: number | null; name?: string | null;
   execution_mode: 'pooled' | 'dedicated'; dual_extraction: boolean;
+  batch_mode?: boolean; batch_state?: BatchState | null;
   status: RunStatus; total_tasks: number; completed_tasks: number;
   failed_tasks: number; total_cost_usd: number;
   created_at: string; completed_at?: string;
@@ -427,7 +432,7 @@ export const api = {
   // Runs
   listRuns: (experimentId?: string, limit = 50) =>
     req<SimulationRun[]>("GET", `/api/runs?limit=${limit}${experimentId ? `&experiment_id=${experimentId}` : ''}`),
-  launchRun: (expId: string, body: { population_size: number; model_pass1?: string; model_pass2?: string; dual_extraction?: boolean; sample_fresh?: boolean; persona_ids?: string[] }) =>
+  launchRun: (expId: string, body: { population_size: number; model_pass1?: string; model_pass2?: string; dual_extraction?: boolean; sample_fresh?: boolean; batch_mode?: boolean; persona_ids?: string[] }) =>
     req<SimulationRun>("POST", `/api/experiments/${expId}/launch`, body),
   getRun: (runId: string) => req<SimulationRun>("GET", `/api/runs/${runId}`),
   renameRun: (runId: string, name: string) => req<SimulationRun>("PATCH", `/api/runs/${runId}`, { name }),

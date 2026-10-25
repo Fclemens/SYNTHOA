@@ -73,12 +73,13 @@ export function runTitle(run: RunLike): string {
 }
 
 /** What distinguishes a run from its siblings: size, model, extraction mode. */
-export function runDetails(run: { total_tasks: number; model_pass1: string; execution_mode?: string; dual_extraction?: boolean }): string {
+export function runDetails(run: { total_tasks: number; model_pass1: string; execution_mode?: string; dual_extraction?: boolean; batch_mode?: boolean }): string {
   return [
     `${run.total_tasks} persona${run.total_tasks !== 1 ? 's' : ''}`,
     run.model_pass1,
     run.execution_mode === 'dedicated' ? 'dedicated' : null,
     run.dual_extraction === false ? 'single extraction' : null,
+    run.batch_mode ? 'batch' : null,
   ].filter(Boolean).join(' · ')
 }
 

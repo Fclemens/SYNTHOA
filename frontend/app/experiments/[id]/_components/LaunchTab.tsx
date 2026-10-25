@@ -47,6 +47,7 @@ export function LaunchTab({ experiment, onGoTo }: { experiment: Experiment; onGo
     model_pass2: '',
     dual_extraction: true,
     sample_fresh: false,
+    batch_mode: false,
   })
 
   const [preflight, setPreflight] = useState<PreflightReport | null>(null)
@@ -74,6 +75,12 @@ export function LaunchTab({ experiment, onGoTo }: { experiment: Experiment; onGo
   const unpriced = [form.model_pass1, form.model_pass2].filter(m => m && settings && !hasPricing(settings.model_pricing, m))
   const keyMissing = settings ? [settings.provider_pass1, settings.provider_pass2].some(p =>
     (p === 'openai' && !settings.openai_api_key_set) || (p === 'anthropic' && !settings.anthropic_api_key_set)) : false
+
+  const batchProviders = ['openai', 'anthropic']
+  const batchBlocker = experiment.execution_mode !== 'pooled' ? 'needs pooled interviews'
+    : settings && !batchProviders.includes(settings.provider_pass1) ? `${settings.provider_pass1} has no batch API` : null
+  const useBatch = form.batch_mode && !batchBlocker
+  const costFactor = useBatch ? 0.5 : 1   // batch requests are billed at half price
 
   const unknownTokens = tokenReport(experiment).unknown
   const checks: CheckItem[] = [
@@ -123,7 +130,7 @@ export function LaunchTab({ experiment, onGoTo }: { experiment: Experiment; onGo
     if (!panelSize) return   // no personas to estimate from yet
     try {
       const report = await runPreflight(Math.min(5, panelSize))
-      setEstimate(report ? report.cost_estimate.per_persona * form.population_size : null)
+      setEstimate(report ? report.cost_estimate.per_persona * form.population_size * costFactor : null)
     } catch { /* estimate stays unknown */ }
   }
 
@@ -136,6 +143,7 @@ export function LaunchTab({ experiment, onGoTo }: { experiment: Experiment; onGo
         model_pass2: form.model_pass2 || undefined,
         dual_extraction: form.dual_extraction,
         sample_fresh: form.sample_fresh,
+        batch_mode: useBatch,
       })
       toast('Simulation launched', 'success')
       router.push(`/runs/${run.id}`)
@@ -227,6 +235,19 @@ export function LaunchTab({ experiment, onGoTo }: { experiment: Experiment; onGo
               <span className="font-medium text-gray-700">Sample fresh personas</span>
               <span className="text-xs text-gray-400">(unchecked = reuse existing audience personas)</span>
             </label>
+            <label className={`flex items-center gap-2 text-sm ${batchBlocker ? 'opacity-50' : ''}`}>
+              <input
+                type="checkbox"
+                checked={useBatch}
+                disabled={!!batchBlocker}
+                onChange={e => setForm(f => ({ ...f, batch_mode: e.target.checked }))}
+                className="rounded border-gray-300 text-indigo-600"
+              />
+              <span className="font-medium text-gray-700">Batch mode</span>
+              <span className="text-xs text-gray-400">
+                {batchBlocker ? `(unavailable: ${batchBlocker})` : '(half price; results within 24h, usually much sooner)'}
+              </span>
+            </label>
           </div>
         </CardBody>
       </Card>
@@ -245,12 +266,12 @@ export function LaunchTab({ experiment, onGoTo }: { experiment: Experiment; onGo
           {preflight ? (
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
               <div className="rounded-lg bg-indigo-50 p-3 text-center">
-                <p className="text-xs text-indigo-500 mb-1">Est. total for {form.population_size}</p>
-                <p className="font-semibold text-indigo-700">{fmtCost(preflight.cost_estimate.per_persona * form.population_size)}</p>
+                <p className="text-xs text-indigo-500 mb-1">Est. total for {form.population_size}{useBatch ? ' (batch)' : ''}</p>
+                <p className="font-semibold text-indigo-700">{fmtCost(preflight.cost_estimate.per_persona * form.population_size * costFactor)}</p>
               </div>
               <div className="rounded-lg bg-gray-50 p-3 text-center">
                 <p className="text-xs text-gray-500 mb-1">Per Persona</p>
-                <p className="font-semibold text-gray-700">{fmtCost(preflight.cost_estimate.per_persona)}</p>
+                <p className="font-semibold text-gray-700">{fmtCost(preflight.cost_estimate.per_persona * costFactor)}</p>
               </div>
               <div className="rounded-lg bg-gray-50 p-3 text-center">
                 <p className="text-xs text-gray-500 mb-1">P1 Tokens / persona</p>
@@ -290,6 +311,12 @@ export function LaunchTab({ experiment, onGoTo }: { experiment: Experiment; onGo
             <strong>{form.population_size}</strong> personas · <span className="font-mono">{form.model_pass1}</span> interviews ·{' '}
             <span className="font-mono">{form.model_pass2}</span> extraction{form.dual_extraction ? ' (dual)' : ''}
           </p>
+          {useBatch && (
+            <p className="text-xs text-gray-500">
+              Batch mode: one persona runs live to check the setup, the rest are submitted to the provider&apos;s batch API.
+              Results can take up to 24 hours; you can close SYNTHOA meanwhile.
+            </p>
+          )}
           <p>
             Estimated cost:{' '}
             <strong>

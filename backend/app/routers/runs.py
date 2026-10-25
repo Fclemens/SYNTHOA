@@ -19,11 +19,12 @@ from ..schemas.simulation import (
     LaunchRequest, ReExtractRequest, RunUpdate,
     SimulationRunOut, SimulationTaskDetail, SimulationTaskSummary,
 )
+from ..services.batch import BATCH_PROVIDERS
 from ..services.execution import (
     ACTIVE_STATUSES, FINISHED_STATUSES, launch_run, re_extract_run, retry_failed_tasks,
     resume_run as resume_run_task,
 )
-from ..services.interview import load_experiment_config, resolve_interview
+from ..services.interview import load_experiment_config, resolve_interview, snapshot_protocol
 from ..services.sampling import sample_correlated_population
 
 router = APIRouter(prefix="/api", tags=["runs"])
@@ -98,6 +99,12 @@ async def launch_simulation(
         if shortage > 0:
             persona_ids += await _make_fresh_personas(shortage)
 
+    if body.batch_mode:
+        if exp.execution_mode != "pooled":
+            raise HTTPException(status_code=400, detail="Batch mode needs pooled interviews (one request per persona)")
+        if settings.provider_pass1 not in BATCH_PROVIDERS:
+            raise HTTPException(status_code=400, detail=f"{settings.provider_pass1} has no batch API; use OpenAI or Anthropic")
+
     config = await load_experiment_config(experiment_id, db)
     model_pass1 = body.model_pass1 or settings.model_pass1
     model_pass2 = body.model_pass2 or settings.model_pass2
@@ -112,6 +119,8 @@ async def launch_simulation(
         "drift_detection_enabled": exp.drift_detection_enabled,
         "provider_pass1": settings.provider_pass1,
         "provider_pass2": settings.provider_pass2,
+        "protocol": snapshot_protocol(config),
+        "batch_mode": body.batch_mode,
     }
 
     previous = await db.scalar(

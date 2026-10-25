@@ -26,6 +26,7 @@ _ADDED_COLUMNS = [
     ("personas", "archived", "BOOLEAN NOT NULL DEFAULT 0"),
     ("simulation_runs", "run_number", "INTEGER"),
     ("simulation_runs", "name", "TEXT"),
+    ("simulation_runs", "batch_state", "JSON"),
 ]
 
 # Columns and tables of removed features (plausibility checks, synonym

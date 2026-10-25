@@ -78,6 +78,7 @@ class Settings(BaseSettings):
     # ── Execution ─────────────────────────────────────────────────────────────
     max_concurrent_tasks: int = 10
     tpm_limit: int = 2_000_000
+    batch_poll_seconds: float = 30.0   # how often batch runs check the provider
     max_context_tokens: int = 100_000
 
     model_pricing: dict[str, dict[str, float]] = Field(

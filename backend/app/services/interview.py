@@ -6,6 +6,7 @@ preview, and pre-flight estimates, so all three send identical prompts.
 from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any, Awaitable, Callable, Optional
 
 from sqlalchemy import select
@@ -19,8 +20,8 @@ from .drift_detection import (
     score_adherence,
     should_inject_checkpoint,
 )
-from .llm_client import call_llm_messages
-from .prompt_assembly import build_pooled_prompt, dedicated_system_prompt, format_question, truncate_if_needed
+from .llm_client import call_llm_messages, result_cost
+from .prompt_assembly import build_pooled_prompt, dedicated_system_messages, format_question, truncate_if_needed
 from .variable_resolution import resolve_dist_variables
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,8 @@ class InterviewResult:
     assembled_prompt: str
     tokens_in: int = 0
     tokens_out: int = 0
+    cost_usd: float = 0.0
+    cached_tokens: int = 0
     drift_scores: list[float] = field(default_factory=list)
     drift_flagged: bool = False
 
@@ -69,6 +72,46 @@ async def load_experiment_config(experiment_id: str, db: AsyncSession) -> Experi
         dist_vars=list(dist_vars),
         questions=list(questions),
         output_schema=schema.schema_json if schema else [],
+    )
+
+
+def snapshot_protocol(config: ExperimentConfig) -> dict[str, Any]:
+    """
+    Everything an interview depends on, frozen at launch. Retries and resumes
+    replay this snapshot, so editing the experiment later never mixes versions
+    inside one run.
+    """
+    exp = config.experiment
+    return {
+        "global_context": exp.global_context,
+        "execution_mode": exp.execution_mode,
+        "drift_detection_enabled": exp.drift_detection_enabled,
+        "dist_variables": [
+            {"name": v.name, "var_type": v.var_type, "distribution": v.distribution} for v in config.dist_vars
+        ],
+        "questions": [
+            {
+                "sort_order": q.sort_order, "question_type": q.question_type, "question_text": q.question_text,
+                "scale_min": q.scale_min, "scale_max": q.scale_max,
+                "scale_anchor_low": q.scale_anchor_low, "scale_anchor_high": q.scale_anchor_high,
+                "choices": q.choices, "ask_why": q.ask_why,
+            }
+            for q in config.questions
+        ],
+    }
+
+
+def config_from_snapshot(snapshot: dict[str, Any], output_schema: list[dict[str, Any]]) -> ExperimentConfig:
+    """Rebuild an ExperimentConfig from a run's frozen protocol (attribute access like the ORM rows)."""
+    return ExperimentConfig(
+        experiment=SimpleNamespace(
+            global_context=snapshot.get("global_context", ""),
+            execution_mode=snapshot.get("execution_mode", "pooled"),
+            drift_detection_enabled=snapshot.get("drift_detection_enabled", True),
+        ),
+        dist_vars=[SimpleNamespace(**v) for v in snapshot.get("dist_variables", [])],
+        questions=[SimpleNamespace(**q) for q in snapshot.get("questions", [])],
+        output_schema=output_schema,
     )
 
 
@@ -107,10 +150,13 @@ async def run_pooled_interview(
     provider: str,
 ) -> InterviewResult:
     messages, assembled = build_pooled_prompt(backstory, context, questions, model)
-    response, tin, tout = await call_llm_messages(
+    res = await call_llm_messages(
         messages, model=model, provider=provider, temperature=INTERVIEW_TEMPERATURE
     )
-    return InterviewResult(transcript=response, assembled_prompt=assembled, tokens_in=tin, tokens_out=tout)
+    return InterviewResult(
+        transcript=res[0], assembled_prompt=assembled, tokens_in=res[1], tokens_out=res[2],
+        cost_usd=result_cost(res, model), cached_tokens=getattr(res, "cached_tokens", 0),
+    )
 
 
 async def run_dedicated_interview(
@@ -127,19 +173,20 @@ async def run_dedicated_interview(
     is_cancelled: Optional[Callable[[], Awaitable[bool]]] = None,
 ) -> InterviewResult:
     """Multi-turn interview, one question per turn, with optional drift checkpoints."""
-    system_content = dedicated_system_prompt(backstory, context)
-    conversation: list[dict[str, str]] = [{"role": "system", "content": system_content}]
-    parts = [f"[SYSTEM]\n{system_content}"]
+    conversation: list[dict[str, Any]] = dedicated_system_messages(backstory, context)
+    parts = ["[SYSTEM]\n" + "\n\n".join(m["content"] for m in conversation)]
     result = InterviewResult(transcript="", assembled_prompt=parts[0])
 
-    async def ask(messages: list[dict[str, str]]) -> str:
-        text, tin, tout = await call_llm_messages(
+    async def ask(messages: list[dict[str, Any]]) -> str:
+        res = await call_llm_messages(
             truncate_if_needed(messages, model), model=model, provider=provider,
             temperature=INTERVIEW_TEMPERATURE,
         )
-        result.tokens_in += tin
-        result.tokens_out += tout
-        return text
+        result.tokens_in += res[1]
+        result.tokens_out += res[2]
+        result.cost_usd += result_cost(res, model)
+        result.cached_tokens += getattr(res, "cached_tokens", 0)
+        return res[0]
 
     for idx, q in enumerate(questions):
         if is_cancelled and await is_cancelled():

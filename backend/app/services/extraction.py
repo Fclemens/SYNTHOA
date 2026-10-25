@@ -8,7 +8,7 @@ import logging
 import re
 from typing import Any
 
-from .llm_client import call_llm, get_price, parse_json_response
+from .llm_client import call_llm_messages, parse_json_response, result_cost
 
 logger = logging.getLogger(__name__)
 
@@ -76,17 +76,25 @@ def _build_response_json_schema(output_schema: list[dict[str, Any]]) -> dict[str
     }
 
 
-def _build_extraction_prompt(transcript: str, output_schema: list[dict[str, Any]]) -> str:
+def build_extraction_messages(transcript: str, output_schema: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Instructions + schema first (identical for every task, so cacheable), transcript last."""
     schema_str = json.dumps([normalize_field(f) for f in output_schema], indent=2)
-    return (
-        "You are a precise data extraction engine. Read the following interview transcript "
+    instructions = (
+        "You are a precise data extraction engine. Read the interview transcript you are given "
         "and extract the requested data points. Return ONLY valid JSON matching this schema.\n\n"
         f"Schema:\n{schema_str}\n\n"
         "For each field, also provide a confidence score (0.0–1.0) indicating how clearly "
         "the transcript supports your extraction.\n\n"
-        f"Transcript:\n---\n{transcript}\n---\n\n"
         'Return JSON: {"data": {...}, "confidence": {...}}'
     )
+    return [
+        {"role": "system", "content": instructions, "cache": True},
+        {"role": "user", "content": f"Transcript:\n---\n{transcript}\n---"},
+    ]
+
+
+def extraction_temperatures(dual: bool) -> list[float]:
+    return [0.0, 0.3] if dual else [0.0]
 
 
 def _parse_result(text: str) -> dict[str, Any] | None:
@@ -108,33 +116,15 @@ def _conf(result: dict[str, Any], key: str) -> float:
         return 0.5
 
 
-async def extract_with_confidence(
-    transcript: str,
-    output_schema: list[dict[str, Any]],
-    model: str,
-    provider: str = "openai",
-    dual: bool = True,
-) -> dict[str, Any]:
+def combine_extractions(
+    texts: list[str], output_schema: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, float], dict[str, Any]]:
     """
-    Run extraction once (dual=False) or twice (dual=True) with different temperatures.
-    Raises ValueError when no run returned parseable JSON, so the task is marked
-    failed (and retryable) instead of "completed" with empty data.
+    Merge one or two extraction outputs into (data, confidence, disagreements).
+    Raises ValueError when none is parseable, so the task is marked failed
+    (and retryable) instead of "completed" with empty data.
     """
-    prompt = _build_extraction_prompt(transcript, output_schema)
-    resp_schema = _build_response_json_schema(output_schema)
-
-    temperatures = [0.0, 0.3] if dual else [0.0]
-    results: list[dict[str, Any] | None] = []
-    total_in = total_out = 0
-    for temp in temperatures:
-        text, tin, tout = await call_llm(
-            prompt, model=model, provider=provider, temperature=temp, json_schema=resp_schema
-        )
-        total_in += tin
-        total_out += tout
-        results.append(_parse_result(text))
-
-    usable = [r for r in results if r is not None]
+    usable = [r for r in (_parse_result(t) for t in texts) if r is not None]
     if not usable:
         raise ValueError("Extraction returned no parseable JSON")
 
@@ -149,7 +139,7 @@ async def extract_with_confidence(
             final_data[key] = only["data"].get(key)
             final_confidence[key] = _conf(only, key)
     else:
-        result_a, result_b = usable
+        result_a, result_b = usable[:2]
         for field in output_schema:
             key = field["key"]
             val_a, val_b = result_a["data"].get(key), result_b["data"].get(key)
@@ -162,12 +152,38 @@ async def extract_with_confidence(
                 winner_val, winner_conf = (val_a, conf_a) if conf_a >= conf_b else (val_b, conf_b)
                 final_data[key] = winner_val
                 final_confidence[key] = round(winner_conf * 0.7, 4)  # penalise for disagreement
+    return final_data, final_confidence, disagreements
 
+
+async def extract_with_confidence(
+    transcript: str,
+    output_schema: list[dict[str, Any]],
+    model: str,
+    provider: str = "openai",
+    dual: bool = True,
+) -> dict[str, Any]:
+    """Run extraction once (dual=False) or twice (dual=True) with different temperatures."""
+    messages = build_extraction_messages(transcript, output_schema)
+    resp_schema = _build_response_json_schema(output_schema)
+
+    texts: list[str] = []
+    total_in = total_out = 0
+    cost = 0.0
+    for temp in extraction_temperatures(dual):
+        res = await call_llm_messages(
+            messages, model=model, provider=provider, temperature=temp, json_schema=resp_schema
+        )
+        texts.append(res[0])
+        total_in += res[1]
+        total_out += res[2]
+        cost += result_cost(res, model)
+
+    data, confidence, disagreements = combine_extractions(texts, output_schema)
     return {
-        "extracted_json": final_data,
-        "extraction_confidence": final_confidence,
+        "extracted_json": data,
+        "extraction_confidence": confidence,
         "extraction_disagreements": disagreements,
         "pass2_tokens_in": total_in,
         "pass2_tokens_out": total_out,
-        "pass2_cost_usd": get_price(model, total_in, total_out),
+        "pass2_cost_usd": cost,
     }

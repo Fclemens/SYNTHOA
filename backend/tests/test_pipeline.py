@@ -220,3 +220,22 @@ async def test_panel_check_compares_target_and_sample(client, fake_llm):
 async def test_provider_test_endpoint(client, fake_llm):
     r = (await client.post("/api/settings/test-provider", json={"provider": "openai", "model": "gpt-6-luna"})).json()
     assert r["ok"] is True and "latency_ms" in r
+
+
+async def test_retry_replays_the_protocol_frozen_at_launch(client, fake_llm):
+    a = await make_audience(client)
+    e = await make_experiment(client, a["id"])
+    fake_llm.fail_interviews = True
+    run = await launch(client, e["id"], n=2)
+    assert run["status"] == "failed"
+
+    # Edit the experiment after launch; the retry must still ask the original question.
+    q = (await client.get(f"/api/experiments/{e['id']}")).json()["questions"][-1]
+    await client.put(f"/api/experiments/{e['id']}/questions/{q['id']}", json={"question_text": "EDITED AFTER LAUNCH"})
+    fake_llm.fail_interviews = False
+    fake_llm.calls.clear()
+    await client.post(f"/api/runs/{run['id']}/retry-failed")
+    run = (await client.get(f"/api/runs/{run['id']}")).json()
+    assert run["status"] == "completed"
+    text = prompts_text(fake_llm)
+    assert "Anything else?" in text and "EDITED AFTER LAUNCH" not in text

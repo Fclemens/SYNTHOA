@@ -29,6 +29,8 @@ class SimulationRun(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
     analysis_cache: Mapped[dict | None] = mapped_column(JSON)
+    # Batch API runs: {phase, provider, batches: [ids], submitted_at, total, done, failed}
+    batch_state: Mapped[dict | None] = mapped_column(JSON)
 
     experiment: Mapped["Experiment"] = relationship(back_populates="runs")  # type: ignore[name-defined]
 
@@ -39,6 +41,10 @@ class SimulationRun(Base):
     @property
     def dual_extraction(self) -> bool:
         return (self.locked_config or {}).get("dual_extraction", True)
+
+    @property
+    def batch_mode(self) -> bool:
+        return bool((self.locked_config or {}).get("batch_mode", False))
     tasks: Mapped[list["SimulationTask"]] = relationship(
         back_populates="run", cascade="all, delete-orphan"
     )

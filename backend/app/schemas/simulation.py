@@ -14,6 +14,7 @@ class LaunchRequest(BaseModel):
     dual_extraction: bool = True
     persona_ids: Optional[list[str]] = None   # explicit list overrides everything
     sample_fresh: bool = False                 # True = always generate new personas
+    batch_mode: bool = False                   # True = provider Batch API (50% cheaper, up to 24h)
 
 
 # ── SimulationRun ─────────────────────────────────────────────────────────────
@@ -27,6 +28,8 @@ class SimulationRunOut(BaseModel):
     name: Optional[str] = None
     execution_mode: str = "pooled"
     dual_extraction: bool = True
+    batch_mode: bool = False
+    batch_state: Optional[dict] = None
     model_pass1: str
     model_pass2: str
     status: str

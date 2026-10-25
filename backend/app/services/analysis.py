@@ -8,7 +8,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from ..services.llm_client import call_llm, get_price, parse_json_response
+from ..services.llm_client import call_llm, parse_json_response
 
 PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 

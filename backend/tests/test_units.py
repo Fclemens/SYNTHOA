@@ -128,5 +128,36 @@ async def test_anthropic_uses_output_config_and_no_temperature(monkeypatch):
     kwargs = seen[0]
     assert "temperature" not in kwargs and "tools" not in kwargs and "tool_choice" not in kwargs
     assert kwargs["output_config"]["format"] == {"type": "json_schema", "schema": schema}
-    assert kwargs["system"] == "sys" and kwargs["max_tokens"] >= 400
+    assert kwargs["system"] == [{"type": "text", "text": "sys"}] and kwargs["max_tokens"] >= 400
     assert (tin, tout) == (5, 2)
+
+
+def test_cache_aware_pricing_and_batch_discount():
+    from app.services.llm_client import LLMResult, get_price
+    full = get_price("gpt-6.1-sol", 1_000_000, 0)
+    assert full == pytest.approx(2.0)
+    assert get_price("gpt-6.1-sol", 1_000_000, 0, cached_tokens=1_000_000) == pytest.approx(0.2)
+    assert get_price("gpt-6.1-sol", 1_000_000, 0, cache_write_tokens=1_000_000) == pytest.approx(2.5)
+    assert LLMResult("x", 1_000_000, 0, batch=True).cost("gpt-6.1-sol") == pytest.approx(1.0)
+
+
+def test_shared_survey_is_a_cached_prefix_and_backstory_comes_after():
+    from app.services.prompt_assembly import build_pooled_prompt
+    q = [{"sort_order": 1, "text": "Like it?", "type": "open_ended", "ask_why": False}]
+    a, _ = build_pooled_prompt("I am Ann.", "Context", q, "gpt-6.1-sol")
+    b, _ = build_pooled_prompt("I am Bob.", "Context", q, "gpt-6.1-sol")
+    assert a[0] == b[0] and a[0]["cache"] is True and "Like it?" in a[0]["content"]
+    assert "Ann" in a[1]["content"] and a[-1]["role"] == "user"
+    body_a = llm_client.openai_request(a, "gpt-6.1-sol", "openai", 0.7, 400)
+    body_b = llm_client.openai_request(b, "gpt-6.1-sol", "openai", 0.7, 400)
+    assert body_a["prompt_cache_key"] == body_b["prompt_cache_key"]
+    assert all("cache" not in m for m in body_a["messages"])
+    claude = llm_client.anthropic_request(a, "claude-haiku-5-5", 400)
+    assert claude["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in claude["system"][1]
+
+
+def test_anthropic_result_counts_cache_reads_in_input():
+    usage = {"input_tokens": 10, "cache_read_input_tokens": 1000, "cache_creation_input_tokens": 0, "output_tokens": 5}
+    res = llm_client.anthropic_result({"content": [{"type": "text", "text": "hi"}], "usage": usage, "stop_reason": "end_turn"})
+    assert tuple(res) == ("hi", 1010, 5) and res.cached_tokens == 1000

@@ -14,6 +14,8 @@ from ..config import settings
 
 logger = logging.getLogger(__name__)
 
+POOLED_INSTRUCTION = "Answer the survey above as the person described, in the exact format requested."
+
 DEDICATED_INSTRUCTIONS = (
     "You are in a research interview. Answer each question naturally and conversationally. "
     "Wait for each question before responding."
@@ -50,8 +52,11 @@ def estimate_message_tokens(messages: list[dict[str, str]], model: str) -> int:
     return total
 
 
-def truncate_if_needed(messages: list[dict[str, str]], model: str) -> list[dict[str, str]]:
-    """If token count exceeds max_context_tokens, trim the first (system/backstory) message."""
+def truncate_if_needed(messages: list[dict[str, Any]], model: str) -> list[dict[str, Any]]:
+    """
+    If token count exceeds max_context_tokens, trim the persona's backstory
+    (the first message not marked as a shared, cached prefix).
+    """
     total = estimate_message_tokens(messages, model)
     if total <= settings.max_context_tokens:
         return messages
@@ -63,13 +68,14 @@ def truncate_if_needed(messages: list[dict[str, str]], model: str) -> list[dict[
     enc = _get_encoder(model)
     budget = settings.max_context_tokens - total  # negative = how much to cut
     messages = list(messages)
-    content = messages[0]["content"]
+    idx = next((i for i, m in enumerate(messages) if not m.get("cache")), 0)
+    content = messages[idx]["content"]
     if enc:
         tokens = enc.encode(content)
         content = enc.decode(tokens[:max(100, len(tokens) + budget)])
     else:
         content = content[:max(400, len(content) + budget * 4)]
-    messages[0] = {**messages[0], "content": content + "\n[...truncated for context window...]"}
+    messages[idx] = {**messages[idx], "content": content + "\n[...truncated for context window...]"}
     return messages
 
 
@@ -122,7 +128,7 @@ def build_pooled_prompt(
         f"Q{q['sort_order']}_MOTIVATION: <brief explanation>"
         for q in questions
     )
-    user_content = (
+    survey = (
         f"{global_context}\n\n"
         "---\n"
         "Please answer the following questions in order. For each question, provide:\n"
@@ -132,20 +138,29 @@ def build_pooled_prompt(
         + f"\n\nRespond in this exact format for each question:\n{format_example}"
     )
 
-    messages = []
+    # The survey is identical for every persona, so it goes first and is marked
+    # as a cacheable prefix; only the backstory differs per request.
+    messages: list[dict[str, Any]] = [{"role": "system", "content": survey, "cache": True}]
     if backstory:
-        messages.append({"role": "system", "content": backstory})
-    messages.append({"role": "user", "content": user_content})
+        messages.append({"role": "system", "content": f"Your identity for this interview:\n\n{backstory}"})
+    messages.append({"role": "user", "content": POOLED_INSTRUCTION})
     messages = truncate_if_needed(messages, model)
-    system_part = messages[0]["content"] if messages[0]["role"] == "system" else ""
-    user_part = messages[-1]["content"]
-    assembled = f"[SYSTEM]\n{system_part}\n\n[USER]\n{user_part}" if system_part else f"[USER]\n{user_part}"
+    assembled = "\n\n".join(f"[{m['role'].upper()}]\n{m['content']}" for m in messages)
     return messages, assembled
 
 
+def dedicated_system_messages(backstory: str, global_context: str) -> list[dict[str, Any]]:
+    """Shared instructions + context first (cacheable across personas), then the backstory."""
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": f"{DEDICATED_INSTRUCTIONS}\n\n{global_context}", "cache": True}
+    ]
+    if backstory:
+        messages.append({"role": "system", "content": f"Your identity for this interview:\n\n{backstory}"})
+    return messages
+
+
 def dedicated_system_prompt(backstory: str, global_context: str) -> str:
-    backstory_part = f"{backstory}\n\n" if backstory else ""
-    return f"{backstory_part}{global_context}\n\n{DEDICATED_INSTRUCTIONS}"
+    return "\n\n".join(m["content"] for m in dedicated_system_messages(backstory, global_context))
 
 
 def estimate_dedicated_tokens(
@@ -156,9 +171,7 @@ def estimate_dedicated_tokens(
     answer_tokens: int = 120,
 ) -> int:
     """Sum of input tokens across all turns (the conversation grows each turn)."""
-    history: list[dict[str, str]] = [
-        {"role": "system", "content": dedicated_system_prompt(backstory, global_context)}
-    ]
+    history: list[dict[str, Any]] = dedicated_system_messages(backstory, global_context)
     total = 0
     placeholder_answer = "x " * answer_tokens
     for q in questions:

@@ -28,7 +28,6 @@ from ..schemas.experiment import (
 from ..services.backstory import generate_backstory
 from ..services.extraction import extract_with_confidence
 from ..services.interview import load_experiment_config, resolve_interview, run_interview
-from ..services.llm_client import get_price
 from ..services.preflight import run_preflight
 
 router = APIRouter(prefix="/api/experiments", tags=["experiments"])
@@ -542,5 +541,5 @@ async def preview_interview(
         extraction_confidence=extraction_confidence,
         pass1_tokens_in=result.tokens_in,
         pass1_tokens_out=result.tokens_out,
-        pass1_cost_usd=get_price(model_pass1, result.tokens_in, result.tokens_out),
+        pass1_cost_usd=result.cost_usd,
     )

@@ -35,8 +35,18 @@ insights) has its own provider and model, set on the Settings page:
 - `lmstudio`: any OpenAI-compatible local server (LM Studio, Ollama, vLLM)
 
 Token prices live in Settings → Token Pricing. A model without a price shows
-$0 cost, and the Launch tab warns about it. A run locks its models and
-providers at launch, so retries and resumes reproduce it.
+$0 cost, and the Launch tab warns about it. A run locks its models,
+providers and its full protocol (context, questions, variables) at launch,
+so retries and resumes reproduce it even if the experiment is edited later.
+
+**Prompt caching.** Prompts put the part shared by every persona (survey,
+extraction schema) first and mark it as cacheable; costs use each model's
+cached-input price (default 10% of input).
+
+**Batch mode.** For pooled runs on OpenAI or Anthropic, tick *Batch mode* on
+the Launch tab to submit the run through the provider's Batch API: half price,
+results within 24 hours. One persona runs live first to check the setup.
+Batch runs survive a backend restart; polling resumes where it left off.
 
 ## Tests
 
@@ -53,4 +63,5 @@ The suite runs the full pipeline (sampling → launch → interview → extracti
   automatically at startup.
 - Runs that were in progress when the backend stopped are marked
   *cancelled* at the next start. Use **Resume** on the run page to finish them.
+  Batch runs are the exception: they keep waiting on their provider batch.
 - See `AUDIENCES_REFERENCE.txt` for the audience/sampling model in detail.
