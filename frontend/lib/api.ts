@@ -3,18 +3,39 @@
  * All routes map 1:1 to the FastAPI spec.
  */
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+export const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+/** Turn a FastAPI error body into a sentence a person can act on. */
+function errorMessage(status: number, text: string): string {
+  try {
+    const { detail } = JSON.parse(text)
+    if (typeof detail === "string") return detail
+    if (Array.isArray(detail)) {
+      // Pydantic validation errors: [{loc: [...], msg}]
+      return detail
+        .map((d: { loc?: (string | number)[]; msg?: string }) => {
+          const field = (d.loc ?? []).filter(p => p !== "body").join(".")
+          return field ? `${field}: ${d.msg}` : d.msg
+        })
+        .join("; ")
+    }
+  } catch { /* not JSON */ }
+  if (status >= 500) return "The server hit an error. Check the backend logs."
+  return text || `Request failed (${status})`
+}
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`${method} ${path} → ${res.status}: ${text}`);
+  let res: Response
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new Error(`Can't reach the backend at ${BASE}. Is it running?`)
   }
+  if (!res.ok) throw new Error(errorMessage(res.status, await res.text()));
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
@@ -39,8 +60,8 @@ export interface ExperimentProtocolBundle {
     name: string
     global_context: string
     execution_mode: 'pooled' | 'dedicated'
+    drift_detection_enabled?: boolean
   }
-  variables: { placeholder: string; attributes: { value: string; weight: number }[] }[]
   dist_variables: { name: string; var_type: string; distribution: Record<string, unknown>; sort_order: number }[]
   questions: {
     sort_order: number
@@ -48,17 +69,18 @@ export interface ExperimentProtocolBundle {
     question_text: string
     scale_min?: number
     scale_max?: number
+    scale_anchor_low?: string
+    scale_anchor_high?: string
     choices?: string[]
     ask_why: boolean
     prompting_mode?: string
   }[]
-  output_schema: { key: string; type: string; description?: string }[]
+  output_schema: SchemaField[]
 }
 
 export interface ExperimentImportResult {
   experiment_id: string
   name: string
-  variables_imported: number
   dist_variables_imported: number
   questions_imported: number
   output_schema_imported: boolean
@@ -101,12 +123,8 @@ export interface Experiment {
   execution_mode: "pooled" | "dedicated";
   drift_detection_enabled: boolean;
   created_at: string;
-  variables: ExperimentVariable[]; dist_variables: ExperimentDistVariable[];
+  dist_variables: ExperimentDistVariable[];
   questions: Question[]; output_schemas: OutputSchema[];
-}
-export interface ExperimentVariable {
-  id: string; experiment_id: string; placeholder: string;
-  attributes: { value: string; weight: number }[];
 }
 export interface Question {
   id: string; experiment_id: string; sort_order: number;
@@ -116,11 +134,18 @@ export interface Question {
   choices?: string[]; ask_why: boolean; prompting_mode?: string;
 }
 export interface OutputSchema { id: string; experiment_id: string; schema_json: SchemaField[]; version: number; created_at: string; }
-export interface SchemaField { key: string; type: string; description?: string; }
+export type SchemaFieldType = 'string' | 'integer' | 'float' | 'boolean' | 'scale' | 'enum'
+export interface SchemaField { key: string; type: SchemaFieldType | string; description?: string; values?: string[]; }
+
+export type RunStatus = 'pending' | 'running' | 'completed' | 'completed_with_errors' | 'failed' | 'cancelled'
+export const ACTIVE_RUN_STATUSES: RunStatus[] = ['pending', 'running']
+export const isRunActive = (status: string) => ACTIVE_RUN_STATUSES.includes(status as RunStatus)
+/** Finished runs that produced at least some results worth analysing. */
+export const hasResults = (status: string) => status === 'completed' || status === 'completed_with_errors'
 
 export interface SimulationRun {
   id: string; experiment_id: string; model_pass1: string; model_pass2: string;
-  status: string; total_tasks: number; completed_tasks: number;
+  status: RunStatus; total_tasks: number; completed_tasks: number;
   failed_tasks: number; total_cost_usd: number;
   created_at: string; completed_at?: string;
 }
@@ -128,15 +153,16 @@ export interface SimulationTaskSummary {
   id: string; run_id: string; persona_id: string; injected_vars: Record<string, unknown>;
   pass1_status: string; pass2_status: string; drift_flagged: boolean;
   pass1_cost_usd?: number; pass2_cost_usd?: number;
+  pass1_error?: string; pass2_error?: string;
 }
 export interface SimulationTaskDetail extends SimulationTaskSummary {
   pass1_prompt?: string; raw_transcript?: string;
-  pass1_tokens_in?: number; pass1_tokens_out?: number; pass1_error?: string;
+  pass1_tokens_in?: number; pass1_tokens_out?: number;
   drift_scores?: number[];
   extracted_json?: Record<string, unknown>;
   extraction_confidence?: Record<string, number>;
   extraction_disagreements?: Record<string, unknown>;
-  pass2_tokens_in?: number; pass2_tokens_out?: number; pass2_error?: string;
+  pass2_tokens_in?: number; pass2_tokens_out?: number;
 }
 
 export interface PreflightReport {
@@ -152,7 +178,9 @@ export interface PersonaPayload {
 }
 
 export interface PreviewInterviewResult {
-  persona_id: string; assembled_prompt: string; transcript: string;
+  persona_id: string; persona_traits: Record<string, unknown>; backstory: string;
+  resolved_variables: Record<string, string>;
+  assembled_prompt: string; transcript: string;
   extracted_json?: Record<string, unknown>; extraction_confidence?: Record<string, number>;
   pass1_tokens_in: number; pass1_tokens_out: number; pass1_cost_usd: number;
 }
@@ -268,11 +296,6 @@ export interface AppSettings {
   model_backstory: string;
   effective_backstory_provider: string;
   effective_backstory_model: string;
-  provider_validation: string;      // "" = inherit from pass2
-  model_validation: string;
-  effective_validation_provider: string;
-  effective_validation_model: string;
-
   provider_insights: string;        // "" = inherit from pass2
   model_insights: string;
   effective_insights_provider: string;
@@ -280,7 +303,6 @@ export interface AppSettings {
 
   max_concurrent_tasks: number;
   tpm_limit: number;
-  plausibility_threshold: number;
   max_context_tokens: number;
   model_pricing: Record<string, ModelPricing>;
 }
@@ -357,13 +379,6 @@ export const api = {
     req<Experiment>("PUT", `/api/experiments/${id}`, body),
   deleteExperiment: (id: string) => req<void>("DELETE", `/api/experiments/${id}`),
 
-  addExpVariable: (expId: string, body: { placeholder: string; attributes: { value: string; weight: number }[] }) =>
-    req<ExperimentVariable>("POST", `/api/experiments/${expId}/variables`, body),
-  updateExpVariable: (expId: string, varId: string, body: unknown) =>
-    req<ExperimentVariable>("PUT", `/api/experiments/${expId}/variables/${varId}`, body),
-  deleteExpVariable: (expId: string, varId: string) =>
-    req<void>("DELETE", `/api/experiments/${expId}/variables/${varId}`),
-
   addExpDistVariable: (expId: string, body: { name: string; var_type: string; distribution: DistributionConfig; sort_order?: number }) =>
     req<ExperimentDistVariable>("POST", `/api/experiments/${expId}/dist-variables`, body),
   updateExpDistVariable: (expId: string, varId: string, body: Partial<{ name: string; var_type: string; distribution: DistributionConfig; sort_order: number }>) =>
@@ -373,7 +388,7 @@ export const api = {
 
   addQuestion: (expId: string, body: Omit<Question, "id" | "experiment_id">) =>
     req<Question>("POST", `/api/experiments/${expId}/questions`, body),
-  updateQuestion: (expId: string, qId: string, body: Partial<Question>) =>
+  updateQuestion: (expId: string, qId: string, body: Partial<{ [K in keyof Question]: Question[K] | null }>) =>
     req<Question>("PUT", `/api/experiments/${expId}/questions/${qId}`, body),
   deleteQuestion: (expId: string, qId: string) =>
     req<void>("DELETE", `/api/experiments/${expId}/questions/${qId}`),
@@ -388,7 +403,7 @@ export const api = {
   preflight: (expId: string, body: { sample_size?: number; model_pass1?: string; model_pass2?: string; dual_extraction?: boolean }) =>
     req<PreflightReport>("POST", `/api/experiments/${expId}/preflight`, body),
 
-  previewInterview: (expId: string, body: { persona_id: string; model?: string; dual_extraction?: boolean }) =>
+  previewInterview: (expId: string, body: { persona_id?: string; model?: string; dual_extraction?: boolean } = {}) =>
     req<PreviewInterviewResult>("POST", `/api/experiments/${expId}/preview-interview`, body),
 
   // Runs

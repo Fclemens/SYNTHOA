@@ -174,7 +174,9 @@ POST /api/audiences/{id}/sample
 
 POST /api/audiences/{id}/sample/fresh
   body: { n, backstory_mode }
-  Deletes all existing personas first, then generates n new ones.
+  Replaces the panel: personas no run has used are deleted, personas used by
+  past runs are archived (hidden from the panel, kept for those runs' analysis).
+  Then generates n new ones.
 
 Returns SamplingJob (async, 202). Job monitor shows progress bar.
 
@@ -186,7 +188,7 @@ Job controls:
 ---
 
 CRUD ENDPOINTS
-GET    /api/audiences                      list all (includes persona_count)
+GET    /api/audiences                      list all (persona_count = active panel size)
 POST   /api/audiences                      create { name, description }
 GET    /api/audiences/{id}                 get with variables
 PUT    /api/audiences/{id}                 update name/description/template
@@ -201,7 +203,7 @@ GET    /api/audiences/{id}/correlations    get saved correlation pairs
 PUT    /api/audiences/{id}/correlations    upsert correlation matrix
 
 GET    /api/audiences/{id}/personas        list personas
-DELETE /api/audiences/{id}/personas        clear all personas
+DELETE /api/audiences/{id}/personas/{pid}  remove one persona (archived if a run used it)
 
 GET    /api/audiences/{id}/export          export JSON bundle (optionally incl. personas)
 POST   /api/audiences/import               import JSON bundle
@@ -221,7 +223,7 @@ UI FEATURES (frontend)
 - Backstory section: 3-way radio (none/template/llm) + prompt template editor
   with cursor-position chip insertion, used-var greying, invalid token guard
 - Sampling modal: n, backstory mode (default: none), reuse toggle
-- Start Fresh modal: n, backstory mode — deletes all personas first
+- Start Fresh modal: n, backstory mode — replaces the panel (used personas archived)
 - Job monitor: progress bar, Pause / Resume / Cancel buttons
 - Persona cards: paginated, shows traits + backstory
 - Export/Import JSON bundle

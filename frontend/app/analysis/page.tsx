@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { api, SimulationRun, Experiment } from '@/lib/api'
+import { api, hasResults, SimulationRun, Experiment } from '@/lib/api'
+import { runStatusLabel } from '@/lib/utils'
 
 function statusColor(s: string) {
   if (s === 'completed') return 'bg-green-100 text-green-700'
+  if (s === 'completed_with_errors') return 'bg-amber-100 text-amber-700'
   if (s === 'running') return 'bg-blue-100 text-blue-700'
   if (s === 'failed') return 'bg-red-100 text-red-700'
   if (s === 'cancelled') return 'bg-gray-100 text-gray-500'
@@ -37,7 +39,7 @@ export default function AnalysisPage() {
     grouped[run.experiment_id].push(run)
   }
 
-  const completedRuns = runs.filter(r => r.status === 'completed')
+  const completedRuns = runs.filter(r => hasResults(r.status))
 
   const togglePick = (runId: string) => {
     setPicked(prev => prev.includes(runId) ? prev.filter(x => x !== runId) : prev.length < 2 ? [...prev, runId] : prev)
@@ -83,7 +85,7 @@ export default function AnalysisPage() {
         <div className="space-y-6">
           {Object.entries(grouped).map(([expId, expRuns]) => {
             const exp = experiments[expId]
-            const completed = expRuns.filter(r => r.status === 'completed')
+            const completed = expRuns.filter(r => hasResults(r.status))
             if (completed.length === 0) return null
             const canCompare = completed.length >= 2
             const isComparingHere = compareMode === expId
@@ -133,7 +135,7 @@ export default function AnalysisPage() {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
                               <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${statusColor(run.status)}`}>
-                                {run.status}
+                                {runStatusLabel(run.status)}
                               </span>
                               <span className="text-xs text-gray-400 font-mono">{run.id.slice(0, 8)}</span>
                             </div>
@@ -159,7 +161,7 @@ export default function AnalysisPage() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${statusColor(run.status)}`}>
-                              {run.status}
+                              {runStatusLabel(run.status)}
                             </span>
                             <span className="text-xs text-gray-400 font-mono">{run.id.slice(0, 8)}</span>
                           </div>

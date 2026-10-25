@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { useToast } from '@/components/ui/Toast'
-import { fmtDateTime, runStatusColor, pct } from '@/lib/utils'
+import { fmtDateTime, runStatusColor, runStatusLabel, pct } from '@/lib/utils'
 import { ProgressBar } from '@/components/ui/ProgressBar'
 import { PruneRunsModal } from '@/components/PruneRunsModal'
 
@@ -36,15 +36,17 @@ export default function Dashboard() {
     const [a, e, r] = await Promise.all([
       api.listAudiences(),
       api.listExperiments(),
-      api.listRuns ? api.listRuns() : Promise.resolve([]),
+      api.listRuns(),
     ])
     setAudiences(a)
     setExperiments(e)
-    setRuns(r as SimulationRun[])
+    setRuns(r)
   }
 
   useEffect(() => {
-    loadAll().finally(() => setLoading(false))
+    loadAll()
+      .catch((e: unknown) => toast(e instanceof Error ? e.message : 'Failed to load dashboard', 'error'))
+      .finally(() => setLoading(false))
   }, [])
 
   async function handlePruneConfirm(includeCompleted: boolean) {
@@ -64,7 +66,7 @@ export default function Dashboard() {
   if (loading) return <PageSpinner />
 
   const runningRuns = runs.filter(r => r.status === 'running')
-  const completedRuns = runs.filter(r => r.status === 'completed')
+  const completedRuns = runs.filter(r => r.status === 'completed' || r.status === 'completed_with_errors')
   const totalTasks = runs.reduce((s, r) => s + (r.total_tasks ?? 0), 0)
   const pruneCounts = {
     failed:    runs.filter(r => r.status === 'failed').length,
@@ -151,12 +153,12 @@ export default function Dashboard() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <p className="font-medium text-gray-900 truncate">{run.id.slice(0, 8)}…</p>
-                          <Badge color={runStatusColor(run.status)}>{run.status}</Badge>
+                          <Badge color={runStatusColor(run.status)}>{runStatusLabel(run.status)}</Badge>
                         </div>
                         <div className="mt-2">
                           <ProgressBar
                             value={progress}
-                            color={run.status === 'failed' ? 'red' : run.status === 'completed' ? 'green' : 'indigo'}
+                            color={run.status === 'failed' ? 'red' : run.status === 'completed' ? 'green' : run.status === 'completed_with_errors' ? 'yellow' : 'indigo'}
                             size="sm"
                           />
                         </div>

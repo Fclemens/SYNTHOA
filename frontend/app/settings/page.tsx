@@ -32,7 +32,7 @@ const STEPS: StepMeta[] = [
   },
   {
     label: 'Pass 2 — Extraction',
-    description: 'Extracts structured answers from the transcript (dual-extraction at temp 0 and 0.3). Also used as fallback for backstory and validation when those are left blank.',
+    description: 'Extracts structured answers from the transcript (dual-extraction at temp 0 and 0.3). Also used as fallback for backstory and insights when those are left blank.',
     providerKey: 'provider_pass2',
     modelKey: 'model_pass2',
   },
@@ -43,14 +43,6 @@ const STEPS: StepMeta[] = [
     modelKey: 'model_backstory',
     effectiveProviderKey: 'effective_backstory_provider',
     effectiveModelKey: 'effective_backstory_model',
-  },
-  {
-    label: 'LLM Plausibility Validation',
-    description: 'Optional LLM-based plausibility check on sampled traits. Leave blank to inherit Pass 2 settings.',
-    providerKey: 'provider_validation',
-    modelKey: 'model_validation',
-    effectiveProviderKey: 'effective_validation_provider',
-    effectiveModelKey: 'effective_validation_model',
   },
   {
     label: 'Insights / Analysis',
@@ -87,8 +79,6 @@ export default function SettingsPage() {
         model_pass2: s.model_pass2,
         provider_backstory: s.provider_backstory,
         model_backstory: s.model_backstory,
-        provider_validation: s.provider_validation,
-        model_validation: s.model_validation,
         provider_insights: s.provider_insights,
         model_insights: s.model_insights,
         lmstudio_base_url: s.lmstudio_base_url,
@@ -96,7 +86,6 @@ export default function SettingsPage() {
         anthropic_api_key: '',    // write-only — never pre-filled
         max_concurrent_tasks: s.max_concurrent_tasks,
         tpm_limit: s.tpm_limit,
-        plausibility_threshold: s.plausibility_threshold,
         max_context_tokens: s.max_context_tokens,
         model_pricing: { ...s.model_pricing },
       })
@@ -121,7 +110,7 @@ export default function SettingsPage() {
       setSettings(updated)
       // Clear key fields after successful save
       setForm(f => ({ ...f, openai_api_key: '', anthropic_api_key: '' }))
-      toast('Settings saved', 'success')
+      toast('Settings saved. New runs use them; existing runs keep the models they were launched with.', 'success')
     } catch (e: unknown) {
       toast(e instanceof Error ? e.message : 'Failed to save settings', 'error')
     } finally {
@@ -248,14 +237,6 @@ export default function SettingsPage() {
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className={labelCls}>Plausibility threshold</label>
-                <input type="number" min={0} max={1} step={0.05}
-                  value={(form.plausibility_threshold as number) ?? 0.5}
-                  onChange={e => set('plausibility_threshold', parseFloat(e.target.value) || 0.5)}
-                  className={inputCls} />
-                <p className={helpCls}>Personas scoring below this are flagged (0–1).</p>
-              </div>
               <div>
                 <label className={labelCls}>Max context tokens</label>
                 <input type="number" min={1000}

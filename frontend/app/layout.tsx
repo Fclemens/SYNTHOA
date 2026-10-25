@@ -86,7 +86,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <p className="mb-1 px-3 text-xs font-semibold uppercase tracking-wider text-gray-400">Docs</p>
                 <div className="space-y-0.5">
                   <a
-                    href="http://localhost:8000/docs"
+                    href={`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'}/docs`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-600 transition-colors hover:bg-indigo-50 hover:text-indigo-700"
@@ -104,7 +104,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
               {/* Footer */}
               <div className="border-t border-gray-100 px-5 py-3">
-                <p className="text-xs text-gray-400">v0.1.0 · Local instance</p>
+                <p className="text-xs text-gray-400">v0.2.0 · Local instance</p>
               </div>
             </aside>
 

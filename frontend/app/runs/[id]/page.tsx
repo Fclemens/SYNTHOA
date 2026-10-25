@@ -1,22 +1,20 @@
 'use client'
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
-import { api, SimulationRun, SimulationTaskSummary, SimulationTaskDetail } from '@/lib/api'
-import { fmtDateTime, fmtCost, fmtTokens, runStatusColor, taskStatusColor, pct } from '@/lib/utils'
+import { api, hasResults, isRunActive, SimulationRun, SimulationTaskSummary, SimulationTaskDetail } from '@/lib/api'
+import { usePolling } from '@/lib/usePolling'
+import { fmtDateTime, fmtCost, fmtTokens, runStatusColor, runStatusLabel, taskStatusColor, pct } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Modal } from '@/components/ui/Modal'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { ProgressBar } from '@/components/ui/ProgressBar'
 import { useToast } from '@/components/ui/Toast'
 
 const POLL_INTERVAL = 3000
-
-function isTerminal(status: string) {
-  return status === 'completed' || status === 'failed' || status === 'cancelled'
-}
 
 export default function RunDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -37,8 +35,7 @@ export default function RunDetailPage() {
   const [cancelling, setCancelling] = useState(false)
   const [reExtracting, setReExtracting] = useState(false)
   const [resuming, setResuming] = useState(false)
-
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [confirmCancel, setConfirmCancel] = useState(false)
 
   const loadData = useCallback(async () => {
     try {
@@ -62,26 +59,12 @@ export default function RunDetailPage() {
     loadData().finally(() => setLoading(false))
   }, [loadData])
 
-  // Polling
-  useEffect(() => {
-    if (run && !isTerminal(run.status)) {
-      pollingRef.current = setInterval(async () => {
-        const updated = await loadData()
-        if (updated && isTerminal(updated.status)) {
-          if (pollingRef.current) {
-            clearInterval(pollingRef.current)
-            pollingRef.current = null
-          }
-        }
-      }, POLL_INTERVAL)
-    }
-    return () => {
-      if (pollingRef.current) {
-        clearInterval(pollingRef.current)
-        pollingRef.current = null
-      }
-    }
-  }, [run?.status, loadData])
+  // Poll while the run is active; actions kick() it to pick up the new state at once
+  const kick = usePolling(
+    async () => { const r = await loadData(); return !!r && isRunActive(r.status) },
+    { intervalMs: POLL_INTERVAL, enabled: !!run && isRunActive(run.status) },
+    run?.status,
+  )
 
   async function openTaskDetail(taskId: string) {
     setSelectedTaskId(taskId)
@@ -108,6 +91,7 @@ export default function RunDetailPage() {
       await api.retryFailed(id)
       toast('Retrying failed tasks', 'info')
       await loadData()
+      kick()
     } catch (e: unknown) {
       toast(e instanceof Error ? e.message : 'Retry failed', 'error')
     } finally {
@@ -116,7 +100,7 @@ export default function RunDetailPage() {
   }
 
   async function handleCancel() {
-    if (!confirm('Cancel this simulation run?')) return
+    setConfirmCancel(false)
     try {
       setCancelling(true)
       await api.cancelRun(id)
@@ -135,6 +119,7 @@ export default function RunDetailPage() {
       await api.resumeRun(id)
       toast('Run resumed', 'success')
       await loadData()
+      kick()
     } catch (e: unknown) {
       toast(e instanceof Error ? e.message : 'Resume failed', 'error')
     } finally {
@@ -148,6 +133,7 @@ export default function RunDetailPage() {
       await api.reExtract(id)
       toast('Re-extraction started', 'info')
       await loadData()
+      kick()
     } catch (e: unknown) {
       toast(e instanceof Error ? e.message : 'Re-extract failed', 'error')
     } finally {
@@ -171,7 +157,16 @@ export default function RunDetailPage() {
   if (!run) return null
 
   const progress = pct(run.completed_tasks, run.total_tasks)
-  const progressColor: 'indigo' | 'green' | 'red' = run.status === 'failed' ? 'red' : run.status === 'completed' ? 'green' : 'indigo'
+  const failureCounts: Record<string, number> = {}
+  for (const t of tasks) {
+    const reason = t.pass1_status === 'failed' ? `Interview: ${t.pass1_error ?? 'unknown error'}`
+      : t.pass2_status === 'failed' ? `Extraction: ${t.pass2_error ?? 'unknown error'}` : null
+    if (reason) failureCounts[reason.slice(0, 300)] = (failureCounts[reason.slice(0, 300)] ?? 0) + 1
+  }
+  const failureGroups = Object.entries(failureCounts).sort((a, b) => b[1] - a[1])
+  const progressColor: 'indigo' | 'green' | 'red' | 'yellow' =
+    run.status === 'failed' ? 'red' : run.status === 'completed' ? 'green'
+      : run.status === 'completed_with_errors' ? 'yellow' : 'indigo'
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -190,7 +185,7 @@ export default function RunDetailPage() {
               <h1 className="text-xl font-bold text-gray-900 font-mono">
                 Run {run.id.slice(0, 8)}…
               </h1>
-              <Badge color={runStatusColor(run.status)}>{run.status}</Badge>
+              <Badge color={runStatusColor(run.status)}>{runStatusLabel(run.status)}</Badge>
             </div>
             <p className="mt-1 text-sm text-gray-500">
               Experiment:{' '}
@@ -203,22 +198,22 @@ export default function RunDetailPage() {
 
           {/* Actions */}
           <div className="flex flex-wrap gap-2">
-            {run.failed_tasks > 0 && (
+            {run.failed_tasks > 0 && !isRunActive(run.status) && (
               <Button size="sm" variant="outline" loading={retrying} onClick={handleRetryFailed}>
                 Retry Failed ({run.failed_tasks})
               </Button>
             )}
-            {(run.status === 'running' || run.status === 'pending') && (
-              <Button size="sm" variant="danger" loading={cancelling} onClick={handleCancel}>
+            {isRunActive(run.status) && (
+              <Button size="sm" variant="danger" loading={cancelling} onClick={() => setConfirmCancel(true)}>
                 Cancel
               </Button>
             )}
-            {(run.status === 'cancelled' || run.status === 'failed') && (
+            {run.status === 'cancelled' && (
               <Button size="sm" variant="outline" loading={resuming} onClick={handleResume}>
                 Resume
               </Button>
             )}
-            {isTerminal(run.status) && (
+            {!isRunActive(run.status) && tasks.some(t => t.pass1_status === 'completed') && (
               <Button size="sm" variant="outline" loading={reExtracting} onClick={handleReExtract}>
                 Re-extract
               </Button>
@@ -226,11 +221,8 @@ export default function RunDetailPage() {
             <Button size="sm" variant="secondary" onClick={() => window.open(api.exportRun(id, 'csv'), '_blank')}>
               Export CSV
             </Button>
-            <Button size="sm" variant="secondary" onClick={() => {
-              const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
-              window.open(`${base}/api/runs/${id}/export?format=json`, '_blank')
-            }}>
-              Export JSON
+            <Button size="sm" variant="secondary" onClick={() => window.open(api.exportRun(id, 'xlsx'), '_blank')}>
+              Export XLSX
             </Button>
           </div>
         </div>
@@ -256,6 +248,26 @@ export default function RunDetailPage() {
             <ProgressBar value={progress} color={progressColor} showLabel size="md" />
           </CardBody>
         </Card>
+
+        {/* Failures grouped by cause */}
+        {failureGroups.length > 0 && (
+          <Card className="mb-6">
+            <CardHeader>
+              <h2 className="font-semibold text-gray-800">Why tasks failed</h2>
+            </CardHeader>
+            <CardBody className="space-y-2">
+              {failureGroups.map(([reason, count]) => (
+                <div key={reason} className="flex items-start gap-3 text-sm">
+                  <span className="mt-0.5 rounded bg-red-50 px-2 py-0.5 text-xs font-semibold tabular-nums text-red-700">{count}×</span>
+                  <span className="break-all text-gray-700">{reason}</span>
+                </div>
+              ))}
+              <p className="pt-1 text-xs text-gray-400">
+                Retrying re-runs only what failed: interviews that failed are redone, failed extractions re-run on the existing transcript.
+              </p>
+            </CardBody>
+          </Card>
+        )}
 
         {/* Tasks Table */}
         <div className="mb-6">
@@ -320,9 +332,21 @@ export default function RunDetailPage() {
         </div>
 
         {/* Results Summary — shown when run is completed and tasks have extracted data */}
-        {run.status === 'completed' && tasks.length > 0 && (
+        {hasResults(run.status) && tasks.length > 0 && (
           <ResultsSummary runId={id} tasks={tasks} />
         )}
+
+      <ConfirmDialog
+        open={confirmCancel}
+        title="Cancel this run?"
+        confirmLabel="Cancel run"
+        danger
+        loading={cancelling}
+        onConfirm={handleCancel}
+        onClose={() => setConfirmCancel(false)}
+      >
+        Interviews already finished are kept. You can resume the run later to finish the rest.
+      </ConfirmDialog>
 
       {/* Task Detail Modal */}
       <Modal

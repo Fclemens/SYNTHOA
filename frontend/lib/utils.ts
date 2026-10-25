@@ -23,11 +23,21 @@ export function fmtTokens(n: number | null | undefined): string {
 export function runStatusColor(status: string): 'gray' | 'blue' | 'green' | 'red' | 'yellow' {
   switch (status) {
     case 'completed': return 'green'
+    case 'completed_with_errors': return 'yellow'
     case 'running':   return 'blue'
     case 'failed':    return 'red'
     case 'cancelled': return 'gray'
     default:          return 'yellow'
   }
+}
+
+export function runStatusLabel(status: string): string {
+  return status === 'completed_with_errors' ? 'completed with errors' : status
+}
+
+/** Price lookup that tells the UI when a model has no pricing entry (cost would show $0). */
+export function hasPricing(pricing: Record<string, unknown> | undefined, model: string): boolean {
+  return !!pricing && model in pricing
 }
 
 export function taskStatusColor(status: string): 'gray' | 'blue' | 'green' | 'red' | 'yellow' {

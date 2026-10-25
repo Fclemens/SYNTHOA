@@ -46,6 +46,8 @@ class SimulationTaskSummary(BaseModel):
     drift_flagged: bool
     pass1_cost_usd: Optional[float]
     pass2_cost_usd: Optional[float]
+    pass1_error: Optional[str]
+    pass2_error: Optional[str]
 
 
 class SimulationTaskDetail(SimulationTaskSummary):
@@ -53,14 +55,12 @@ class SimulationTaskDetail(SimulationTaskSummary):
     raw_transcript: Optional[str]
     pass1_tokens_in: Optional[int]
     pass1_tokens_out: Optional[int]
-    pass1_error: Optional[str]
     drift_scores: Optional[list[Any]]
     extracted_json: Optional[dict[str, Any]]
     extraction_confidence: Optional[dict[str, float]]
     extraction_disagreements: Optional[dict[str, Any]]
     pass2_tokens_in: Optional[int]
     pass2_tokens_out: Optional[int]
-    pass2_error: Optional[str]
 
 
 # ── Re-extract ────────────────────────────────────────────────────────────────

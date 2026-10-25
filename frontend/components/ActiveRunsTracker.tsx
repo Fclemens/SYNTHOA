@@ -1,11 +1,14 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import Link from 'next/link'
-import { api, SimulationRun } from '@/lib/api'
+import { api, isRunActive as isActive, SimulationRun } from '@/lib/api'
+import { usePolling } from '@/lib/usePolling'
+import { runStatusLabel } from '@/lib/utils'
 import { useToast } from '@/components/ui/Toast'
 import { PruneRunsModal } from '@/components/PruneRunsModal'
 
 const POLL_MS = 3000
+const IDLE_POLL_MS = 15000   // keeps the list fresh so newly launched runs show up
 const MAX_SHOWN = 5
 
 type RunProgress = {
@@ -14,10 +17,9 @@ type RunProgress = {
   failed: number; total: number
 }
 
-function isActive(s: string) { return s === 'running' || s === 'pending' }
-
 function statusDot(status: string) {
   if (status === 'completed') return 'bg-green-500'
+  if (status === 'completed_with_errors') return 'bg-amber-500'
   if (status === 'failed')    return 'bg-red-500'
   if (status === 'cancelled') return 'bg-gray-400'
   if (status === 'running')   return 'bg-indigo-500 animate-pulse'
@@ -30,7 +32,6 @@ export default function ActiveRunsTracker() {
   const [progress, setProgress]   = useState<Record<string, RunProgress>>({})
   const [pruneModalOpen, setPruneModalOpen] = useState(false)
   const [pruning, setPruning]     = useState(false)
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   async function poll(): Promise<boolean> {
     try {
@@ -69,42 +70,14 @@ export default function ActiveRunsTracker() {
     }
   }
 
-  useEffect(() => {
-    let cancelled = false
-
-    async function startPolling() {
-      const hasActive = await poll()
-      if (cancelled) return
-
-      if (hasActive) {
-        // Active runs present — poll repeatedly and stop when they finish
-        intervalRef.current = setInterval(async () => {
-          const stillActive = await poll()
-          if (!stillActive && intervalRef.current) {
-            clearInterval(intervalRef.current)
-            intervalRef.current = null
-          }
-        }, POLL_MS)
-      }
-      // No active runs — single load only, no interval
-    }
-
-    startPolling()
-    return () => {
-      cancelled = true
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
-        intervalRef.current = null
-      }
-    }
-  }, [])
+  usePolling(poll, { intervalMs: POLL_MS, idleIntervalMs: IDLE_POLL_MS, immediate: true })
 
   if (runs.length === 0) return null
 
   const pruneCounts = {
     failed:    runs.filter(r => r.status === 'failed').length,
     cancelled: runs.filter(r => r.status === 'cancelled').length,
-    completed: runs.filter(r => r.status === 'completed').length,
+    completed: runs.filter(r => r.status === 'completed' || r.status === 'completed_with_errors').length,
   }
   const prunableCount = pruneCounts.failed + pruneCounts.cancelled + pruneCounts.completed
 
@@ -139,7 +112,7 @@ export default function ActiveRunsTracker() {
           let phase = ''
           let bar1pct = 0   // Pass 1 bar (green when done)
           let bar2pct = 0   // Pass 2 bar (indigo)
-          let label   = run.status
+          let label   = runStatusLabel(run.status)
 
           if (active && prog) {
             const total = prog.total || run.total_tasks || 1
@@ -163,7 +136,7 @@ export default function ActiveRunsTracker() {
             bar1pct = 100
             bar2pct = 100
             label = `${run.total_tasks} done`
-          } else if (run.status === 'failed') {
+          } else if (run.status === 'failed' || run.status === 'completed_with_errors') {
             bar1pct = run.total_tasks > 0 ? Math.round(((run.completed_tasks + run.failed_tasks) / run.total_tasks) * 100) : 0
             bar2pct = run.total_tasks > 0 ? Math.round((run.completed_tasks / run.total_tasks) * 100) : 0
             label = `${run.failed_tasks} failed`
@@ -188,6 +161,7 @@ export default function ActiveRunsTracker() {
                 </span>
                 <span className={`text-xs font-medium flex-shrink-0 tabular-nums ${
                   run.status === 'completed' ? 'text-green-600' :
+                  run.status === 'completed_with_errors' ? 'text-amber-600' :
                   run.status === 'failed'    ? 'text-red-500'   :
                   run.status === 'cancelled' ? 'text-gray-400'  :
                   'text-indigo-600'
@@ -197,7 +171,7 @@ export default function ActiveRunsTracker() {
               </div>
 
               {/* Two stacked progress bars: P1 (teal) on top, P2 (indigo) below */}
-              {active || run.status === 'completed' || run.status === 'failed' ? (
+              {run.status !== 'cancelled' ? (
                 <div className="space-y-0.5">
                   {/* Pass 1 bar */}
                   <div className="flex items-center gap-1.5">

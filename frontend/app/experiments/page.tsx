@@ -96,7 +96,7 @@ export default function ExperimentsPage() {
       setImporting(true)
       const result = await api.importExperimentProtocol(importAudienceId, pendingBundle)
       toast(
-        `Imported "${result.name}" — ${result.questions_imported} questions, ${result.variables_imported} vars`,
+        `Imported "${result.name}" — ${result.questions_imported} questions, ${result.dist_variables_imported} variables`,
         'success',
       )
       setImportModalOpen(false)
@@ -234,8 +234,8 @@ export default function ExperimentsPage() {
                   {exp.questions?.length > 0 && (
                     <Badge color="gray">{exp.questions.length} question{exp.questions.length !== 1 ? 's' : ''}</Badge>
                   )}
-                  {exp.variables?.length > 0 && (
-                    <Badge color="yellow">{exp.variables.length} var{exp.variables.length !== 1 ? 's' : ''}</Badge>
+                  {exp.dist_variables?.length > 0 && (
+                    <Badge color="yellow">{exp.dist_variables.length} var{exp.dist_variables.length !== 1 ? 's' : ''}</Badge>
                   )}
                 </div>
                 <p className="mt-3 text-xs text-gray-400">Created {fmtDate(exp.created_at)}</p>
@@ -257,7 +257,7 @@ export default function ExperimentsPage() {
               <p className="font-medium">{pendingBundle.experiment.name}</p>
               <p className="mt-1 text-indigo-600">
                 {pendingBundle.questions.length} questions ·{' '}
-                {pendingBundle.variables.length} vars ·{' '}
+                {pendingBundle.dist_variables.length} vars ·{' '}
                 {pendingBundle.output_schema.length} output fields ·{' '}
                 {pendingBundle.experiment.execution_mode} mode
               </p>
