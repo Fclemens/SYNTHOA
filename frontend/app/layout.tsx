@@ -4,7 +4,7 @@ import { ToastProvider } from '@/components/ui/Toast'
 import { AppShell } from '@/components/layout/AppShell'
 
 export const metadata: Metadata = {
-  title: 'Synthoa',
+  title: 'SYNTHOA',
   description: 'Synthetic customer research — simulated survey respondents powered by LLMs',
 }
 

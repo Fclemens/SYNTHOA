@@ -130,7 +130,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Synthoa",
+    title="SYNTHOA",
     description=(
         "Platform for running synthetic customer interviews via LLMs. "
         "Four modules: Audience Builder → Script Editor → Pre-Flight → Execution & Results."

@@ -1,4 +1,4 @@
-# Synthoa
+# SYNTHOA
 
 *by fclementi*. Synthetic customer research with LLMs: define an **audience** (a statistical
 population of personas), write an **experiment** (questions + variables), run

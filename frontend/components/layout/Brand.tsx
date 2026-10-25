@@ -24,7 +24,7 @@ export function Brand({ compact = false }: { compact?: boolean }) {
       <BrandMark />
       {!compact && (
         <div className="flex flex-col leading-tight">
-          <span className="text-[15px] font-bold tracking-[0.01em] text-gray-900">Synthoa</span>
+          <span className="text-[15px] font-bold tracking-[0.06em] text-gray-900">SYNTHOA</span>
           <span className="text-[11px] tracking-[0.02em] text-gray-500">
             by <b className="font-medium text-indigo-400">fclementi</b>
           </span>

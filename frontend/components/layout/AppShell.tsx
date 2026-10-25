@@ -51,7 +51,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen">
       <aside className={`glass fixed inset-y-3 left-3 z-40 flex ${width} flex-col rounded-2xl transition-[width] duration-200`}>
         <div className={`flex h-16 items-center ${collapsed ? 'justify-center' : 'justify-between px-4'}`}>
-          <Link href="/" title="Synthoa"><Brand compact={collapsed} /></Link>
+          <Link href="/" title="SYNTHOA"><Brand compact={collapsed} /></Link>
           {!collapsed && (
             <button onClick={toggle} title="Collapse sidebar" className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-900">
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
