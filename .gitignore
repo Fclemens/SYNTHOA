@@ -27,3 +27,9 @@ Thumbs.db
 
 # Test caches
 .pytest_cache/
+
+# Static frontend export and desktop build output
+frontend/out/
+build/
+dist/
+backend/data/

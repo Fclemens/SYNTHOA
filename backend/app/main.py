@@ -5,10 +5,12 @@ import uuid
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, text
 
 from .config import load_overrides, settings
 from .database import init_db, engine
+from .paths import WEB_DIR, ensure_data_dir
 from .routers import (
     audiences_router, analysis_router,
     experiments_router, runs_router, settings_router,
@@ -122,6 +124,7 @@ def _migrate(conn) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    ensure_data_dir()         # portable exe: data\ folder next to SYNTHOA.exe
     load_overrides()          # apply settings_override.json if present
     await init_db()           # create_all for new tables
     async with engine.begin() as conn:
@@ -158,3 +161,10 @@ app.include_router(analysis_router)
 @app.get("/health")
 async def health():
     return {"status": "ok", "version": app.version}
+
+
+# The built frontend (STATIC_EXPORT=1 → frontend/out, bundled in the exe) is
+# served from the same origin, so one process is the whole app. Mounted last:
+# API routes take precedence.
+if (WEB_DIR / "index.html").exists():
+    app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")

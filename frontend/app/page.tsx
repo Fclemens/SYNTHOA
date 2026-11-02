@@ -1,4 +1,5 @@
 'use client'
+import { routes } from '@/lib/routes'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { api, Audience, Experiment, hasResults, isRunActive, SimulationRun } from '@/lib/api'
@@ -110,9 +111,9 @@ export default function Dashboard() {
               <p className="text-sm text-gray-500">Four steps from an empty workspace to your first results.</p>
             </div>
             <Step n={1} done={audiences.length > 0} title="Create an audience" hint="Describe your population with variables like age, income or region." href="/audiences" cta="Create" />
-            <Step n={2} done={personas > 0} title="Sample personas" hint="Generate a panel of synthetic respondents from the audience." href={audiences[0] ? `/audiences/${audiences[0].id}` : '/audiences'} cta="Sample" />
+            <Step n={2} done={personas > 0} title="Sample personas" hint="Generate a panel of synthetic respondents from the audience." href={audiences[0] ? routes.audience(audiences[0].id) : '/audiences'} cta="Sample" />
             <Step n={3} done={experiments.length > 0} title="Design an experiment" hint="Write the questions and choose what to extract from each interview." href="/experiments" cta="Create" />
-            <Step n={4} done={false} title="Test and launch" hint="Try one persona, check the cost, then run the full panel." href={experiments[0] ? `/experiments/${experiments[0].id}?tab=launch` : '/experiments'} cta="Launch" />
+            <Step n={4} done={false} title="Test and launch" hint="Try one persona, check the cost, then run the full panel." href={experiments[0] ? routes.experiment(experiments[0].id, 'launch') : '/experiments'} cta="Launch" />
           </CardBody>
         </Card>
       ) : (
@@ -131,9 +132,9 @@ export default function Dashboard() {
                 </div>
                 <div className="mt-4 flex gap-2">
                   {hasResults(lastRun.status)
-                    ? <Link href={`/analysis/${lastRun.id}`}><Button size="sm">View results</Button></Link>
-                    : <Link href={`/runs/${lastRun.id}`}><Button size="sm">Open run</Button></Link>}
-                  <Link href={`/runs/${lastRun.id}`}><Button size="sm" variant="ghost">Run details</Button></Link>
+                    ? <Link href={routes.results(lastRun.id)}><Button size="sm">View results</Button></Link>
+                    : <Link href={routes.run(lastRun.id)}><Button size="sm">Open run</Button></Link>}
+                  <Link href={routes.run(lastRun.id)}><Button size="sm" variant="ghost">Run details</Button></Link>
                 </div>
               </CardBody>
             </Card>
@@ -148,8 +149,8 @@ export default function Dashboard() {
                   {runs.filter(r => r.experiment_id === lastExperiment.id).length} runs
                 </p>
                 <div className="mt-4 flex gap-2">
-                  <Link href={`/experiments/${lastExperiment.id}`}><Button size="sm" variant="secondary">Open experiment</Button></Link>
-                  <Link href={`/experiments/${lastExperiment.id}?tab=launch`}><Button size="sm" variant="ghost">New run</Button></Link>
+                  <Link href={routes.experiment(lastExperiment.id)}><Button size="sm" variant="secondary">Open experiment</Button></Link>
+                  <Link href={routes.experiment(lastExperiment.id, 'launch')}><Button size="sm" variant="ghost">New run</Button></Link>
                 </div>
               </CardBody>
             </Card>
@@ -173,7 +174,7 @@ export default function Dashboard() {
           <Card>
             <div className="divide-y divide-gray-100">
               {runs.slice(0, 6).map(run => (
-                <Link key={run.id} href={hasResults(run.status) ? `/analysis/${run.id}` : `/runs/${run.id}`}
+                <Link key={run.id} href={hasResults(run.status) ? routes.results(run.id) : routes.run(run.id)}
                   className="flex items-center gap-4 px-5 py-3 transition-colors hover:bg-gray-50">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">

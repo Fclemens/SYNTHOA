@@ -1,7 +1,8 @@
 'use client'
+import { routes, useIdParam } from '@/lib/routes'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useParams, useRouter, useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { api, Experiment } from '@/lib/api'
 import { fmtDate } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
@@ -24,8 +25,8 @@ type Tab = 'overview' | 'variables' | 'questions' | 'schema' | 'launch' | 'runs'
 
 // ── Main Page ────────────────────────────────────────────────────────────────
 
-export default function ExperimentDetailPage() {
-  const { id } = useParams<{ id: string }>()
+export function ExperimentDetail() {
+  const id = useIdParam()
   const router = useRouter()
   const searchParams = useSearchParams()
   const { toast } = useToast()
@@ -118,7 +119,7 @@ export default function ExperimentDetailPage() {
               <Badge color={experiment.execution_mode === 'pooled' ? 'blue' : 'purple'}>{experiment.execution_mode}</Badge>
             </div>
             <p className="mt-1 text-sm text-gray-500">
-              {audienceName && <>Audience <Link href={`/audiences/${experiment.audience_id}`} className="text-indigo-400 hover:underline">{audienceName}</Link> · </>}
+              {audienceName && <>Audience <Link href={routes.audience(experiment.audience_id)} className="text-indigo-400 hover:underline">{audienceName}</Link> · </>}
               Created {fmtDate(experiment.created_at)}
             </p>
           </div>

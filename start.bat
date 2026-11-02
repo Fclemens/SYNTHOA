@@ -1,6 +1,6 @@
 @echo off
 REM Start backend and frontend for local development (run from the repo root).
-echo Starting GenAI Customer Simulator...
+echo Starting SYNTHOA...
 
 start "Backend" cmd /k "cd /d %~dp0backend && python -m uvicorn app.main:app --reload"
 

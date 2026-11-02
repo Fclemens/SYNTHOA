@@ -5,16 +5,16 @@ Generates the system prompt used during Pass 1 interviews.
 from __future__ import annotations
 import logging
 import re
-from pathlib import Path
 from typing import Any
 
+from ..paths import PROMPTS_DIR
 from .llm_client import call_llm
 
 logger = logging.getLogger(__name__)
 
 # ── Prompt template loading ──────────────────────────────────────────────────
 
-_PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"   # backend/prompts
+_PROMPTS_DIR = PROMPTS_DIR
 
 
 def _load_template(filename: str) -> str:

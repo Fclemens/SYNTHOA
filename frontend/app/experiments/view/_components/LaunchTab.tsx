@@ -1,4 +1,5 @@
 'use client'
+import { routes } from '@/lib/routes'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { api, AppSettings, Experiment, PreflightReport } from '@/lib/api'
@@ -146,7 +147,7 @@ export function LaunchTab({ experiment, onGoTo }: { experiment: Experiment; onGo
         batch_mode: useBatch,
       })
       toast('Simulation launched', 'success')
-      router.push(`/runs/${run.id}`)
+      router.push(routes.run(run.id))
     } catch (e: unknown) {
       toast(e instanceof Error ? e.message : 'Launch failed', 'error')
       setLaunching(false)

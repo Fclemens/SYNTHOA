@@ -1,4 +1,5 @@
 'use client'
+import { routes } from '@/lib/routes'
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -69,7 +70,7 @@ export function RunsTab({ experiment, onNewRun, onCount }: {
                   onChange={() => toggle(run.id)}
                   className={comparable.length >= 2 ? '' : 'invisible'}
                 />
-                <Link href={done ? `/analysis/${run.id}` : `/runs/${run.id}`} className="min-w-0 flex-1">
+                <Link href={done ? routes.results(run.id) : routes.run(run.id)} className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-gray-900 hover:text-indigo-700">{runLabel(run)}</span>
                     {run.name && run.run_number && <span className="text-xs text-gray-500">#{run.run_number}</span>}
@@ -82,9 +83,9 @@ export function RunsTab({ experiment, onNewRun, onCount }: {
                   )}
                 </Link>
                 <div className="flex shrink-0 items-center gap-1">
-                  {done && <Link href={`/analysis/${run.id}`}><Button size="sm" variant="secondary">Results</Button></Link>}
+                  {done && <Link href={routes.results(run.id)}><Button size="sm" variant="secondary">Results</Button></Link>}
                   <OverflowMenu items={[
-                    { label: 'Run details', onClick: () => router.push(`/runs/${run.id}`) },
+                    { label: 'Run details', onClick: () => router.push(routes.run(run.id)) },
                     { label: 'Export CSV', onClick: () => window.open(api.exportRun(run.id, 'csv'), '_blank'), disabled: run.completed_tasks === 0 },
                     { label: 'Export Excel', onClick: () => window.open(api.exportRun(run.id, 'xlsx'), '_blank'), disabled: run.completed_tasks === 0 },
                   ]} />

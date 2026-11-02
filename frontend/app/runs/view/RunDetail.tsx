@@ -1,7 +1,7 @@
 'use client'
+import { routes, useIdParam } from '@/lib/routes'
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
-import { useParams } from 'next/navigation'
 import { api, hasResults, isRunActive, SimulationRun, SimulationTaskSummary, SimulationTaskDetail } from '@/lib/api'
 import { usePolling } from '@/lib/usePolling'
 import { fmtDateTime, fmtCost, fmtTokens, runDetails, runLabel, runStatusColor, runStatusLabel, taskStatusColor, pct } from '@/lib/utils'
@@ -24,8 +24,8 @@ function pass2Shown(t: { pass1_status: string; pass2_status: string }): string {
   return t.pass2_status === 'pending' && (t.pass1_status === 'failed' || t.pass1_status === 'cancelled') ? 'skipped' : t.pass2_status
 }
 
-export default function RunDetailPage() {
-  const { id } = useParams<{ id: string }>()
+export function RunDetail() {
+  const id = useIdParam()
   const { toast } = useToast()
 
   const [run, setRun] = useState<SimulationRun | null>(null)
@@ -188,7 +188,7 @@ export default function RunDetailPage() {
     <div className="space-y-6">
         <Breadcrumbs items={[
           { label: 'Experiments', href: '/experiments' },
-          { label: run.experiment_name ?? 'Experiment', href: `/experiments/${run.experiment_id}` },
+          { label: run.experiment_name ?? 'Experiment', href: routes.experiment(run.experiment_id) },
           { label: runLabel(run) },
         ]} />
 
@@ -227,7 +227,7 @@ export default function RunDetailPage() {
               </Button>
             )}
             {run.completed_tasks > 0 && (
-              <Link href={`/analysis/${id}`}><Button size="sm">View results</Button></Link>
+              <Link href={routes.results(id)}><Button size="sm">View results</Button></Link>
             )}
             <OverflowMenu items={[
               { label: 'Export CSV', onClick: () => window.open(api.exportRun(id, 'csv'), '_blank') },

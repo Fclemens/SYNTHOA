@@ -1,8 +1,8 @@
 'use client'
+import { useIdParam } from '@/lib/routes'
 import { useEffect, useRef, useState } from 'react'
 import { usePolling } from '@/lib/usePolling'
 import Link from 'next/link'
-import { useParams } from 'next/navigation'
 import { api, Audience, AudienceVariable, Persona, SamplingJob } from '@/lib/api'
 import { distributionSummary, fmtDate, pct } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
@@ -23,8 +23,8 @@ import { UnsavedBar } from '@/components/ui/UnsavedBar'
 
 // ── Main page ───────────────────────────────────────────────────────────────
 
-export default function AudienceDetailPage() {
-  const { id } = useParams<{ id: string }>()
+export function AudienceDetail() {
+  const id = useIdParam()
   const { toast } = useToast()
 
   const [audience, setAudience] = useState<Audience | null>(null)

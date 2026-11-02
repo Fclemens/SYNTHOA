@@ -1,4 +1,5 @@
 'use client'
+import { routes } from '@/lib/routes'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { api, Audience, Experiment } from '@/lib/api'
@@ -62,7 +63,7 @@ export function OverviewTab({ experiment, onSaved }: { experiment: Experiment; o
               {audience && (
                 <p className="mt-1 text-xs text-gray-500">
                   {audience.persona_count ?? 0} personas · {audience.variables.length} variables ·{' '}
-                  <Link href={`/audiences/${audience.id}`} className="text-indigo-400 hover:underline">open audience</Link>
+                  <Link href={routes.audience(audience.id)} className="text-indigo-400 hover:underline">open audience</Link>
                 </p>
               )}
             </div>

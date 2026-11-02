@@ -1,4 +1,5 @@
 'use client'
+import { routes } from '@/lib/routes'
 
 import { useEffect, useState, Suspense, useMemo } from 'react'
 import Link from 'next/link'
@@ -102,7 +103,7 @@ function CompareContent() {
       {/* Header */}
       <Breadcrumbs items={[
         { label: 'Analysis', href: '/analysis' },
-        ...(experiment ? [{ label: experiment.name, href: `/experiments/${experiment.id}` }] : []),
+        ...(experiment ? [{ label: experiment.name, href: routes.experiment(experiment.id) }] : []),
         { label: `${runLabel(runA)} vs ${runLabel(runB)}` },
       ]} />
       <div className="mb-6">
@@ -117,7 +118,7 @@ function CompareContent() {
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${color === 'indigo' ? 'bg-indigo-100 text-indigo-700' : 'bg-teal-100 text-teal-700'}`}>
                 {label}
               </span>
-              <Link href={`/analysis/${run.id}`} className="text-sm font-medium text-gray-900 hover:text-indigo-700">{runLabel(run)}</Link>
+              <Link href={routes.results(run.id)} className="text-sm font-medium text-gray-900 hover:text-indigo-700">{runLabel(run)}</Link>
             </div>
             <p className="mb-2 text-xs text-gray-500">{runDetails(run)}</p>
             <div className="grid grid-cols-3 gap-2 text-xs">

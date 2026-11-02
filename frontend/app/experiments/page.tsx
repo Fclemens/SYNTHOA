@@ -1,4 +1,5 @@
 'use client'
+import { routes } from '@/lib/routes'
 import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { api, Audience, Experiment, ExperimentProtocolBundle, SimulationRun } from '@/lib/api'
@@ -108,7 +109,7 @@ export default function ExperimentsPage() {
       setImportModalOpen(false)
       setPendingBundle(null)
       await load()
-      router.push(`/experiments/${result.experiment_id}`)
+      router.push(routes.experiment(result.experiment_id))
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : 'Import failed', 'error')
     } finally {
@@ -204,7 +205,7 @@ export default function ExperimentsPage() {
             <Card
               key={exp.id}
               hover
-              onClick={() => router.push(`/experiments/${exp.id}`)}
+              onClick={() => router.push(routes.experiment(exp.id))}
             >
               <CardBody>
                 <div className="flex items-start justify-between gap-2">

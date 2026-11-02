@@ -1,5 +1,5 @@
 /**
- * Typed API client for the GenAI Customer Simulator backend.
+ * Typed API client for the SYNTHOA backend.
  * All routes map 1:1 to the FastAPI spec.
  */
 
@@ -33,7 +33,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
-    throw new Error(`Can't reach the backend at ${BASE}. Is it running?`)
+    throw new Error(`Can't reach the backend${BASE ? ` at ${BASE}` : ''}. Is it running?`)
   }
   if (!res.ok) throw new Error(errorMessage(res.status, await res.text()));
   if (res.status === 204) return undefined as T;

@@ -1,7 +1,7 @@
 'use client'
+import { routes, useIdParam } from '@/lib/routes'
 
 import { useEffect, useState, useCallback } from 'react'
-import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { api, SimulationRun, RunAnalysisSummary, FieldSummary, Respondent } from '@/lib/api'
 import { fmtCost, fmtDateTime, runDetails, runLabel } from '@/lib/utils'
@@ -17,9 +17,8 @@ type Tab = 'results' | 'transcripts' | 'variables' | 'segments' | 'report'
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function AnalysisDetailPage() {
-  const params = useParams()
-  const runId = params.id as string
+export function ResultsDetail() {
+  const runId = useIdParam()
 
   const [tab, setTab] = useState<Tab>('results')
   const [summary, setSummary] = useState<RunAnalysisSummary | null>(null)
@@ -80,7 +79,7 @@ export default function AnalysisDetailPage() {
     <div>
       <Breadcrumbs items={[
         { label: 'Analysis', href: '/analysis' },
-        ...(runInfo ? [{ label: runInfo.experiment_name ?? 'Experiment', href: `/experiments/${runInfo.experiment_id}` }] : []),
+        ...(runInfo ? [{ label: runInfo.experiment_name ?? 'Experiment', href: routes.experiment(runInfo.experiment_id) }] : []),
         { label: runInfo ? runLabel(runInfo) : 'Run' },
       ]} />
       <div className="mb-6 flex items-start justify-between gap-4">
@@ -95,7 +94,7 @@ export default function AnalysisDetailPage() {
           )}
         </div>
         <div className="flex shrink-0 gap-2">
-          <Link href={`/runs/${runId}`}><Button size="sm" variant="ghost">Run details</Button></Link>
+          <Link href={routes.run(runId)}><Button size="sm" variant="ghost">Run details</Button></Link>
           <a href={api.exportAnalysisPdf(runId)} target="_blank" rel="noreferrer"><Button size="sm" variant="secondary">Export PDF</Button></a>
         </div>
       </div>

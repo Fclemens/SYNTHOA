@@ -1,4 +1,5 @@
 'use client'
+import { routes } from '@/lib/routes'
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
@@ -95,7 +96,7 @@ export default function AnalysisPage() {
                   <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                   </svg>
-                  <Link href={`/experiments/${expId}`} className="text-sm font-semibold text-gray-900 hover:text-indigo-700">
+                  <Link href={routes.experiment(expId)} className="text-sm font-semibold text-gray-900 hover:text-indigo-700">
                     {exp?.name ?? expId}
                   </Link>
                   <span className="text-xs text-gray-400">{completed.length} completed run{completed.length !== 1 ? 's' : ''}</span>
@@ -149,7 +150,7 @@ export default function AnalysisPage() {
                     return (
                       <Link
                         key={run.id}
-                        href={`/analysis/${run.id}`}
+                        href={routes.results(run.id)}
                         className="flex items-center gap-4 px-5 py-3.5 hover:bg-indigo-50 transition-colors group"
                       >
                         <div className="flex-1 min-w-0">

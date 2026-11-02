@@ -5,12 +5,11 @@ from __future__ import annotations
 
 import statistics
 from collections import Counter
-from pathlib import Path
 from typing import Any
 
+from ..paths import PROMPTS_DIR
 from ..services.llm_client import call_llm, parse_json_response
 
-PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 
 
 def _load_prompt(name: str) -> str:

@@ -1,14 +1,15 @@
 from __future__ import annotations
 import json
 import logging
-from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from .paths import DEFAULT_DATABASE_URL, OVERRIDE_FILE
 
 logger = logging.getLogger(__name__)
 
 # Path to the mutable overrides sidecar (outside version control)
-_OVERRIDE_FILE = Path(__file__).parent.parent / "settings_override.json"
+_OVERRIDE_FILE = OVERRIDE_FILE
 
 # Steps whose provider/model may be left blank to inherit from Pass 2.
 INHERITING_STEPS = ("backstory", "insights")
@@ -69,7 +70,7 @@ class Settings(BaseSettings):
     model_insights: str = ""              # "" → inherit from model_pass2
 
     # ── Database / server ─────────────────────────────────────────────────────
-    database_url: str = "sqlite+aiosqlite:///./genai_simulator.db"
+    database_url: str = DEFAULT_DATABASE_URL
     cors_origins: str = (
         "http://localhost:3000,http://127.0.0.1:3000,"
         "http://localhost:3001,http://127.0.0.1:3001"

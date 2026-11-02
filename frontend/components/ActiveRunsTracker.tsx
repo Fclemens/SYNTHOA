@@ -1,4 +1,5 @@
 'use client'
+import { routes } from '@/lib/routes'
 import { useState } from 'react'
 import Link from 'next/link'
 import { api, isRunActive as isActive, SimulationRun } from '@/lib/api'
@@ -150,7 +151,7 @@ export default function ActiveRunsTracker() {
           return (
             <Link
               key={run.id}
-              href={`/runs/${run.id}`}
+              href={routes.run(run.id)}
               className="block rounded-lg px-2 py-2 hover:bg-gray-50 transition-colors group"
             >
               {/* Row: dot · id · label */}

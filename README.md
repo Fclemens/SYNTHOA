@@ -7,9 +7,37 @@ it as simulated interviews, and analyse the extracted answers.
 Workflow: Audience → sample personas → Experiment (variables, questions,
 output schema) → test with 1 persona → launch → run → analysis.
 
-## Run it
+## Desktop app (portable)
 
-**Docker** (recommended):
+`SYNTHOA.exe` runs the app in its own window: no Python, Node or browser needed on the target PC.
+
+**Build it** (needs Python 3.11+ and Node.js 20+ on the build PC): double-click
+
+```text
+BUILD_EXE.bat
+```
+
+It builds outside this folder (in `%LOCALAPPDATA%\SynthoaBuild`, so OneDrive does not sync the build files)
+and produces:
+
+- `dist\SYNTHOA\SYNTHOA.exe`: the app folder
+- `SYNTHOA-win64.zip`: the same folder zipped, to copy to another PC
+
+**Use it:** unzip anywhere and run `SYNTHOA.exe`. Everything stays inside that folder: `data\` (database
+`synthoa.db`, settings and API keys, editable prompts) and `logs\app.log` (for troubleshooting). Copy the folder
+to move SYNTHOA, data included. API keys are entered on the Settings page (or put in `data\.env`).
+
+Notes:
+
+- Requires Windows 10/11 with Microsoft Edge WebView2 (preinstalled on current Windows).
+- The exe is not code-signed: Windows SmartScreen may warn on first launch (`More info` → `Run anyway`).
+- No window wanted (or no WebView2)? `SYNTHOA.exe --serve 8000` runs it headless; open http://127.0.0.1:8000.
+- Closing the window stops running simulations; resume them from the run page. Batch runs keep going at the
+  provider and are picked up at the next start.
+
+## Run it from source
+
+**Docker**:
 
 ```bash
 cp .env.example .env      # add OPENAI_API_KEY and/or ANTHROPIC_API_KEY
@@ -24,6 +52,15 @@ Frontend: http://localhost:3000 · API docs: http://localhost:8000/docs
 cd backend && pip install -r requirements.txt && uvicorn app.main:app --reload
 cd frontend && npm install && npm run dev
 ```
+
+**Single process**: build the frontend as static files and the backend serves it at http://localhost:8000:
+
+```bash
+cd frontend && STATIC_EXPORT=1 npm run build      # writes frontend/out
+cd ../backend && uvicorn app.main:app
+```
+
+`python backend/desktop.py` (with `pip install pywebview`) opens that in a desktop window.
 
 ## Models and providers
 

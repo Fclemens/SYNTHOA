@@ -1,4 +1,5 @@
 'use client'
+import { routes } from '@/lib/routes'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useRef } from 'react'
@@ -58,7 +59,7 @@ export default function AudiencesPage() {
         'success',
       )
       await load()
-      router.push(`/audiences/${result.audience_id}`)
+      router.push(routes.audience(result.audience_id))
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : 'Import failed — check the file format', 'error')
     } finally {
@@ -165,7 +166,7 @@ export default function AudiencesPage() {
               <Card
                 key={audience.id}
                 hover
-                onClick={() => router.push(`/audiences/${audience.id}`)}
+                onClick={() => router.push(routes.audience(audience.id))}
                 className="relative"
               >
                 <div className="absolute right-2 top-2 z-10">
